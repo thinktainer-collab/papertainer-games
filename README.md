@@ -1,0 +1,15 @@
+# Papertainer Games
+
+A small game studio, currently in beta testing. Browser games you can play instantly at
+[games.papertainer.com](https://games.papertainer.com).
+
+## Games
+
+- **좀비 미로 탈출 (Zombie Maze Escape)** — `zombie-maze/`
+  3D first-person mobile game. Episode 1: find four keys and escape the maze.
+  Episode 2: a chase through a larger maze and zombie hordes.
+
+## Structure
+
+Each game lives in its own folder and is plain static files (no build step).
+`zombie-maze/game/three.module.min.js` is three.js (MIT, see `three.LICENSE`).
