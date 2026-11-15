@@ -1232,7 +1232,7 @@ function update(dt) {
   // 공격
   S.fireCd -= dt;
   laser.visible = laserHit.visible = false;
-  if (fireHeld && !P.hidden && !S.cine) {
+  if ((fireHeld || keysDown.KeyF) && !P.hidden && !S.cine) {
     if (P.inMecha) fireLaser(dt);
     else if (S.fireCd <= 0) shootPistol();
   }
