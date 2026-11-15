@@ -52,7 +52,7 @@ function carveMaze(N, r0, startCx, loops) {
 function openRect(c0, c1, r0, r1) { for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) grid[gi(c, r)] = 0; }
 
 function buildGrid() {
-  if (EP === 1) { GW = 15; GH = 39; } else { GW = 23; GH = 50; }
+  if (EP === 1) { GW = 15; GH = 39; } else if (EP === 2) { GW = 23; GH = 50; } else { GW = 23; GH = 46; }
   grid = new Uint8Array(GW * GH).fill(1);
   distMap = new Int16Array(GW * GH);
   explored = new Uint8Array(GW * GH);
@@ -62,12 +62,18 @@ function buildGrid() {
     openRect(1, 13, 15, 26);                               // 보스 구역
     for (const c of [6, 7, 8]) grid[gi(c, 27)] = 2;        // 큰 문
     openRect(1, 13, 28, 37);                               // 공 좀비 방
-  } else {
+  } else if (EP === 2) {
     openRect(1, 21, 1, 10);                                // 2화 보스 구역
     grid[gi(11, 11)] = 2; grid[gi(11, 12)] = 0;            // 문 → 추격전 미로 입구
     carveMaze(11, 12, 5, 26);                              // 더 큰 미로 (12~34행)
     grid[gi(11, 34)] = 2;                                  // 미로 출구 문
     openRect(1, 21, 35, 48);                               // 좀비 떼 구역
+  } else {
+    openRect(1, 21, 1, 12);                                // 3화: 업그레이드된 공 좀비 방
+    for (const c of [10, 11, 12]) grid[gi(c, 13)] = 2;     // 큰 문
+    openRect(1, 21, 14, 29);                               // 대전투 구역
+    for (const c of [10, 11, 12]) grid[gi(c, 30)] = 2;     // 다 없애면 생기는 문
+    openRect(1, 21, 31, 44);                               // 엄청 빠른 좀비 방
   }
 }
 
@@ -211,7 +217,7 @@ function box(parent, w, h, d, x, y, z, material) {
 // ───────────────────────── 월드 만들기 ─────────────────────────
 const world = new THREE.Group();
 scene.add(world);
-let exitDoor, gate, finalDoor, mechaModel;
+let exitDoor, gate, finalDoor, mechaModel, doorCover = null;
 const keys = [], closets = [];
 let MECHA_PARK = { x: 0, z: 0 }, EXIT_TILES = [], GATE_TILES = [], MAZE = { r0: 0, n: 15 };
 
@@ -273,7 +279,7 @@ function buildWorld() {
   world.add(floor);
 
   // 벽 (인스턴스)
-  const tall = (r) => (EP === 1 ? r >= 14 : r <= 11 || r >= 34);
+  const tall = (r) => (EP === 1 ? r >= 14 : EP === 2 ? r <= 11 || r >= 34 : true);
   const low = [], high = [];
   for (let r = 0; r < GH; r++) for (let c = 0; c < GW; c++) if (grid[gi(c, r)] === 1) (tall(r) ? high : low).push([c, r]);
   const m4 = new THREE.Matrix4();
@@ -312,12 +318,23 @@ function buildWorld() {
       world.add(k); keys.push(k);
     }
     for (const [cx, cy] of [[3, 2], [1, 3], [5, 3], [2, 5], [5, 6], [0, 0]]) addCloset(2 * cx + 1, 2 * cy + 1);
-  } else {
+  } else if (EP === 2) {
     gate = makeGate(11, 11, 1); GATE_TILES = [[11, 11]];
     exitDoor = makeExitDoor(11, 34); EXIT_TILES = [[11, 34]];
     MAZE = { r0: 12, n: 23 };
     MECHA_PARK = { x: tc(17), z: tc(38) };
     for (const [cx, cy] of [[5, 1], [2, 2], [8, 2], [0, 4], [4, 4], [10, 4], [7, 5], [2, 7], [5, 7], [9, 7], [0, 9], [6, 9], [3, 10], [9, 10]]) addCloset(2 * cx + 1, 12 + 2 * cy + 1);
+  } else {
+    gate = makeGate(11, 13, 3); GATE_TILES = [[10, 13], [11, 13], [12, 13]];
+    exitDoor = makeGate(11, 30, 3); EXIT_TILES = [[10, 30], [11, 30], [12, 30]];
+    exitDoor.visible = false;                              // 적을 다 없애기 전에는 그냥 벽으로 보인다
+    doorCover = new THREE.Group();
+    const wallGeo = new THREE.BoxGeometry(T, BIG_H, T), wallMat = new THREE.MeshLambertMaterial({ map: texMetal });
+    for (const c of [10, 11, 12]) { const m = new THREE.Mesh(wallGeo, wallMat); m.position.set(tc(c), BIG_H / 2, tc(30)); doorCover.add(m); }
+    world.add(doorCover);
+    MAZE = { r0: 0, n: 1 };
+    MECHA_PARK = { x: tc(16), z: tc(3) };
+    mechaModel.scale.setScalar(1.4);                       // 기존 메카보다 더 큰 메카
   }
   mechaModel.position.set(MECHA_PARK.x, 0, MECHA_PARK.z);
 }
@@ -414,9 +431,9 @@ const sfx = {
 };
 
 // ───────────────────────── 게임 상태 ─────────────────────────
-const P = { x: 0, z: 0, yaw: Math.PI, pitch: 0, eye: 1.6, hp: 100, regen: 0, inv: 0, hideT: 0, keys: 0, hidden: null, inMecha: false, hurtCd: 0, bob: 0 };
-const S = { stage: 'title', running: false, time: 0, fireCd: 0, cine: null, msgT: 0, flags: {}, shake: 0, toSpawn: 0, hitCd: 0 };
-let zombies = [], boss = null, ballZ = null, balls = [], chaser = null;
+const P = { x: 0, z: 0, yaw: Math.PI, pitch: 0, eye: 1.6, hp: 100, max: 100, regen: 0, inv: 0, hideT: 0, keys: 0, hidden: null, inMecha: false, hurtCd: 0, bob: 0 };
+const S = { stage: 'title', running: false, time: 0, fireCd: 0, cine: null, msgT: 0, flags: {}, shake: 0, toSpawn: 0, hitCd: 0, bossCd: 0, area: { c0: 1, c1: 21, r0: 36, r1: 48 } };
+let zombies = [], bosses = [], boss = null, ballZ = null, balls = [], chaser = null, fz = null;   // boss = 체력바에 표시 중인 보스
 let distMap = new Int16Array(GW * GH);
 let explored = new Uint8Array(GW * GH);
 let distT = 0;
@@ -431,7 +448,12 @@ const OBJ = {
   e2gate: () => '문을 열어라',
   chase: () => '쫓아오는 좀비를 피해 미로 출구(초록 표시)로 도망쳐라!',
   horde1: () => (P.inMecha ? '' : '메카에 타라! ') + `좀비 떼를 없애라 (남은 좀비 ${hordeLeft()})`,
-  horde2: () => (P.inMecha ? '' : '메카에 타라! ') + `남은 좀비 ${hordeLeft()}마리` + (boss && !boss.dead ? ' + 조금 더 센 좀비' : ''),
+  horde2: () => (P.inMecha ? '' : '메카에 타라! ') + `남은 좀비 ${hordeLeft()}마리` + (bosses.some((b) => !b.dead) ? ' + 조금 더 센 좀비' : ''),
+  e3ball: () => P.inMecha ? '레이저로 공 던지는 좀비를 없애라!' : '더 큰 메카 로봇에 타라!',
+  e3gate: () => '문을 열어라',
+  e3war: () => `남은 적: 좀비 ${hordeLeft()} · 센 좀비 ${bosses.filter((b) => !b.dead).length}`,
+  e3door: () => '새로 생긴 문을 열어라',
+  e3fast: () => !fz ? '' : fz.state === 'dizzy' ? '다가가서 손으로 땅에 꽂아라!' : fz.phase === 1 ? '엄청 빠른 좀비를 레이저로 약하게 만들어라!' : '불가사리를 피하며 레이저로 끝내라!',
   win: () => '',
 };
 const hordeLeft = () => zombies.filter((z) => !z.dead).length + S.toSpawn;
@@ -483,6 +505,8 @@ function setMecha(on) {
   mechArms.visible = on; gun.visible = !on;
   $('cockpit').classList.toggle('hidden', !on);
   $('fire').textContent = on ? '레이저' : '발사';
+  if (EP === 3) { P.max = on ? 300 : 100; P.hp = P.max; }      // 3화의 더 큰 메카: 탑승 중 체력 300
+  mechArms.scale.setScalar(EP === 3 ? 1.35 : 1);
 }
 
 const BOSS = {
@@ -490,18 +514,50 @@ const BOSS = {
   armor: { name: '레이저에도 버티는 좀비', skin: 0x9aa3ad, cloth: 0x3c444e, eye: 0xff2020, scale: 3.4, c: 11, r: 9, sp: 5.0, dm: 12, df: 30, lz: 5.4 },
   strong: { name: '조금 더 센 좀비', skin: 0x4a9a8a, cloth: 0x1a3a4a, eye: 0xff8000, scale: 2.3, c: 11, r: 47, sp: 3.2, dm: 8, df: 20, lz: 10 },
 };
-function spawnBoss(kind = 'ep1') {
-  if (boss) world.remove(boss.g);
+function clearBosses() { bosses.forEach((b) => world.remove(b.g)); bosses = []; boss = null; }
+function focusBoss(b) {
+  boss = b;
+  $('bossname').textContent = b.k.name;
+  $('bossbar').style.width = Math.max(0, b.hp) + '%';
+  $('bosswrap').classList.remove('hidden');
+}
+function spawnBoss(kind = 'ep1', c, r, add = false) {
+  if (!add) clearBosses();
   const k = BOSS[kind];
   const g = makeZombie(k.skin, k.cloth, k.eye);
   box(g, 0.12, 0.3, 0.12, -0.2, 2.2, 0, 0xe8e0c0); box(g, 0.12, 0.3, 0.12, 0.2, 2.2, 0, 0xe8e0c0);
   g.scale.setScalar(k.scale);
-  g.position.set(tc(k.c), 0, tc(k.r));
+  const x = tc(c ?? k.c), z = tc(r ?? k.r);
+  g.position.set(x, 0, z);
   world.add(g);
-  boss = { g, x: tc(k.c), z: tc(k.r), hp: 100, atk: 1.5, wind: 0, dead: 0, ph: 0, k, s: k.scale / 3.2 };
-  $('bossname').textContent = k.name;
+  const b = { g, x, z, hp: 100, atk: 1.5 + rnd(), wind: 0, dead: 0, ph: 0, k, s: k.scale / 3.2 };
+  bosses.push(b);
+  focusBoss(b);
+  return b;
+}
+
+// 3화: 엄청 빠른 좀비 (1단계 체력 50 → 땅에 꽂힌 뒤 2페이지 체력 118)
+function spawnFz(phase = 1, x = tc(11), z = tc(42)) {
+  if (fz) world.remove(fz.g);
+  const g = makeZombie(0xf2f2f2, 0xd02020, 0x20ffff);
+  g.scale.setScalar(1.8);
+  g.position.set(x, 0, z);
+  world.add(g);
+  const hp = phase === 1 ? 50 : 118;
+  fz = { g, x, z, phase, hp, max: hp, state: phase === 1 ? 'run' : 'p2', atk: 1.5, back: 0, ph: 0, cd: 1.6, lz: phase === 1 ? 6 : 8, dir: 1, dirT: 3 };
+  boss = null;
+  $('bossname').textContent = phase === 1 ? '엄청 빠른 좀비' : '엄청 빠른 좀비 · 2페이지';
   $('bossbar').style.width = '100%';
   $('bosswrap').classList.remove('hidden');
+}
+
+// 3화: 문을 열면 나타나는 적들
+function spawnWar() {
+  startHorde(15, { c0: 1, c1: 21, r0: 19, r1: 29 });
+  clearBosses();
+  spawnBoss('strong', 4, 27, true); spawnBoss('strong', 11, 28, true); spawnBoss('strong', 18, 27, true);
+  spawnBoss('armor', 7, 24, true); spawnBoss('ep1', 15, 24, true);
+  boss = null; $('bosswrap').classList.add('hidden');
 }
 
 // 2화: 추격전에서 쫓아오는 좀비 (총으로 죽지 않는다)
@@ -518,14 +574,16 @@ function spawnChaser() {
 // 2화: 좀비 떼
 function spawnHordeZombie() {
   let x, z, tries = 0;
-  do { x = tc(1 + Math.floor(rnd() * 21)); z = tc(36 + Math.floor(rnd() * 13)); } while (Math.hypot(x - P.x, z - P.z) < 15 && ++tries < 40);
+  const a = S.area;
+  do { x = tc(a.c0 + Math.floor(rnd() * (a.c1 - a.c0 + 1))); z = tc(a.r0 + Math.floor(rnd() * (a.r1 - a.r0 + 1))); } while (Math.hypot(x - P.x, z - P.z) < 15 && ++tries < 40);
   const g = makeZombie(0x7fbf5a, pick([0x3d5a8a, 0x7a4a3a, 0x555566, 0x8a7a3a]), 0xff3020);
   g.position.set(x, 0, z);
   world.add(g);
   zombies.push({ g, x, z, dead: 0, atk: rnd(), ph: rnd() * 6, respawn: 1e9, sp: 2.3 + rnd() * 1.2, ox: (rnd() - 0.5) * 2.4, oz: (rnd() - 0.5) * 2.4, aware: 0 });
 }
 const HORDE_MAX = 25;      // 한 번에 화면에 나오는 좀비 수
-function startHorde(total) {
+function startHorde(total, area = { c0: 1, c1: 21, r0: 36, r1: 48 }) {
+  S.area = area;
   zombies.forEach((z) => world.remove(z.g));
   zombies = [];
   S.toSpawn = total;
@@ -537,15 +595,17 @@ function killZombie(z) {
   sfx.die(); burst(z.x, 1.3, z.z, 0x6fd04a, 10);
 }
 
-function spawnBallZ() {
+function spawnBallZ(up = false) {
   if (ballZ) world.remove(ballZ.g);
-  const g = makeZombie(0xe0a030, 0x9a3a10, 0x40ffff);
+  const g = up ? makeZombie(0x9a50e0, 0x30104a, 0xffe040) : makeZombie(0xe0a030, 0x9a3a10, 0x40ffff);
   const ball = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), mat(0xff4040));
   ball.position.set(0.46, 1.45, 0.8); g.add(ball);
-  g.scale.setScalar(1.7);
-  g.position.set(tc(7), 0, tc(35));
+  const scale = up ? 2.4 : 1.7, cx = up ? tc(11) : tc(7), z = up ? tc(10) : tc(35);
+  g.scale.setScalar(scale);
+  g.position.set(cx, 0, z);
   world.add(g);
-  ballZ = { g, x: tc(7), z: tc(35), cd: 1.2, ph: 0, state: 'alive', vx: 0, vy: 0, vz: 0 };
+  // up = 3화의 업그레이드된 공 좀비: 공 데미지 20, 더 센 메카의 레이저로 죽는다
+  ballZ = { g, x: cx, z, cx, amp: up ? 16 : 9, s: scale / 1.7, cd: up ? 2.5 : 1.2, ph: 0, state: 'alive', vx: 0, vy: 0, vz: 0, dmg: up ? 20 : 10, hp: up ? 60 : null };
 }
 
 function setDoor(door, tiles, open) {
@@ -559,14 +619,14 @@ function setStage(st) {
   scene.fog.far = mazeLike ? 30 : 70;
   scene.fog.near = mazeLike ? 3 : 8;
   $('minimap').classList.toggle('hidden', !mazeLike);
-  $('bosswrap').classList.toggle('hidden', !(st === 'boss' || st === 'e2boss' || st === 'horde2'));
+  $('bosswrap').classList.toggle('hidden', !(st === 'boss' || st === 'e2boss' || st === 'horde2' || st === 'e3fast'));
   $('keys').classList.toggle('hidden', EP !== 1);
 }
 
 // 구간 처음 상태로 되돌린다 (체력 0이 됐을 때 / 구간 시작)
 function startStage(st) {
   setStage(st);
-  P.hp = 100; P.regen = 0; P.inv = 0; P.hideT = 0; P.hidden = null; P.hurtCd = 1; P.pitch = 0;
+  P.max = 100; P.hp = 100; P.regen = 0; P.inv = 0; P.hideT = 0; P.hidden = null; P.hurtCd = 1; P.pitch = 0;
   S.cine = null; S.fireCd = 0;
   clearBalls();
   $('closet').classList.add('hidden');
@@ -605,18 +665,37 @@ function startStage(st) {
     setMecha(st === 'horde2');          // 2차 좀비 떼는 메카에 탄 채로 다시 시작
     startHorde(st === 'horde1' ? 25 : 50);
     if (st === 'horde2') spawnBoss('strong');
+  } else if (st === 'e3ball' || st === 'e3gate') {
+    P.x = tc(11); P.z = tc(2); P.yaw = Math.PI;
+    mechaModel.position.set(MECHA_PARK.x, 0, MECHA_PARK.z);
+    setMecha(false);
+    setDoor(gate, GATE_TILES, false);
+    if (st === 'e3ball') spawnBallZ(true);
+  } else if (st === 'e3war' || st === 'e3door') {
+    P.x = tc(11); P.z = tc(15); P.yaw = Math.PI;
+    setMecha(true);
+    setDoor(gate, GATE_TILES, true); setDoor(exitDoor, EXIT_TILES, false);
+    exitDoor.visible = false; doorCover.visible = true;
+    if (st === 'e3war') spawnWar();
+  } else if (st === 'e3fast') {
+    P.x = tc(11); P.z = tc(32); P.yaw = Math.PI;
+    setMecha(true);
+    setDoor(exitDoor, EXIT_TILES, true);
+    exitDoor.visible = true; doorCover.visible = false;
+    clearBosses(); zombies.forEach((z) => world.remove(z.g)); zombies = [];
+    spawnFz(S.flags.fz2 ? 2 : 1);          // 2페이지까지 갔다면 2페이지부터 다시
   }
 }
 
 function newGame(ep = 1) {
   EP = ep;
   buildWorld();
-  zombies = []; boss = null; ballZ = null; chaser = null;
+  zombies = []; bosses = []; boss = null; ballZ = null; chaser = null; fz = null;
   P.keys = 0; S.time = 0; S.flags = {}; S.toSpawn = 0;
   $('fade').style.opacity = 0;
-  startStage(ep === 1 ? 'maze' : 'e2boss');
+  startStage(['maze', 'e2boss', 'e3ball'][ep - 1]);
   S.running = true;
-  say(ep === 1 ? '열쇠 4개를 찾아 탈출하라!' : '레이저를 맞아도 죽지 않는 좀비가 나타났다!', 3.2);
+  say(['열쇠 4개를 찾아 탈출하라!', '레이저를 맞아도 죽지 않는 좀비가 나타났다!', '공 던지는 좀비가 업그레이드돼서 돌아왔다! 더 큰 메카에 타라!'][ep - 1], 3.4);
 }
 
 // ───────────────────────── 입력 ─────────────────────────
@@ -703,11 +782,12 @@ function begin() {
 }
 $('start').addEventListener('click', () => { begin(); newGame(1); });
 $('start2').addEventListener('click', () => { begin(); newGame(2); });
+$('start3').addEventListener('click', () => { begin(); newGame(3); });
 $('again').addEventListener('click', () => { begin(); newGame(EP); });
-$('next').addEventListener('click', () => { begin(); newGame(2); });
+$('next').addEventListener('click', () => { begin(); newGame(EP + 1); });
 $('retry').addEventListener('click', () => {
   begin();
-  startStage(S.stage === 'gate' || S.stage === 'final' ? 'ball' : S.stage === 'e2gate' ? 'e2boss' : S.stage);
+  startStage({ gate: 'ball', final: 'ball', e2gate: 'e2boss', e3gate: 'e3ball', e3door: 'e3war' }[S.stage] || S.stage);
   S.running = true;
 });
 
@@ -731,7 +811,7 @@ function findAction() {
       setDoor(exitDoor, EXIT_TILES, true); sfx.door(); say('문이 열렸다!');
     }];
   }
-  if ((S.stage === 'boss' || S.stage === 'horde1' || S.stage === 'horde2') && !P.inMecha && mechaModel.visible && near(mechaModel.position.x, mechaModel.position.z, 4.2)) return ['메카\n탑승', () => {
+  if ((S.stage === 'boss' || S.stage === 'horde1' || S.stage === 'horde2' || S.stage === 'e3ball') && !P.inMecha && mechaModel.visible && near(mechaModel.position.x, mechaModel.position.z, 4.2)) return ['메카\n탑승', () => {
     P.x = mechaModel.position.x; P.z = mechaModel.position.z;
     setMecha(true); sfx.board();
     say('메카 탑승! 레이저 버튼으로 공격!', 2.6);
@@ -740,14 +820,32 @@ function findAction() {
     setDoor(gate, GATE_TILES, true); sfx.door();
     burst(P.x, 2.5, P.z, 0x7fe0ff, 30, 8, 0.3);       // 문을 열면 메카가 사라진다
     setMecha(false); mechaModel.visible = false;
-    if (boss) { world.remove(boss.g); boss = null; }
-    P.hp = 100;
+    clearBosses();
+    P.hp = P.max;
     setStage('chase'); spawnChaser();
     say('문을 열자 메카가 사라졌다! 더 큰 미로로 도망쳐라!', 3.6);
   }];
+  if (S.stage === 'e3gate' && near(gate.position.x, gate.position.z, 7.5)) return ['문 열기', () => {
+    setDoor(gate, GATE_TILES, true); sfx.door();
+    P.hp = P.max;
+    setStage('e3war'); spawnWar();
+    sfx.roar(); S.shake = 0.5;
+    say('좀비 15마리, 조금 더 센 좀비 3마리, 레이저에 버티는 좀비, 가장 센 좀비가 나타났다!', 4.5);
+  }];
+  if (S.stage === 'e3door' && near(exitDoor.position.x, exitDoor.position.z, 7.5)) return ['문 열기', () => {
+    setDoor(exitDoor, EXIT_TILES, true); sfx.door();
+    P.hp = P.max;
+    setStage('e3fast'); spawnFz(1);
+    sfx.roar(); S.shake = 0.5;
+    say('엄청 빠른 좀비가 나타났다!', 3);
+  }];
+  if (S.stage === 'e3fast' && fz?.state === 'dizzy' && near(fz.x, fz.z, 8)) return ['땅에\n꽂기', () => {
+    S.cine = { type: 'slam', t: 0 }; fz.state = 'held';
+    clearBalls(); laser.visible = laserHit.visible = false;
+  }];
   if (S.stage === 'gate' && near(tc(7), tc(27), 6.5)) return ['문 열기', () => {
     setDoor(gate, GATE_TILES, true); sfx.door();
-    P.hp = 100;
+    P.hp = P.max;
     setStage('ball'); spawnBallZ();
     say('공 던지는 좀비가 나타났다! 공에 맞으면 체력이 1/10씩 줄어든다', 3.6);
   }];
@@ -797,7 +895,7 @@ function shootPistol() {
     }
   }
   if (best) { killZombie(best); return; }
-  if (boss && !boss.dead && raySphere(vA, vDir, boss.x, 3 * boss.s, boss.z, 2.2 * boss.s) !== null) {
+  if (bosses.some((b) => !b.dead && raySphere(vA, vDir, b.x, 3 * b.s, b.z, 2.2 * b.s) !== null)) {
     burst(vA.x + vDir.x * 3, vA.y + vDir.y * 3, vA.z + vDir.z * 3, 0xaaaaaa, 3, 2);
     say('권총이 통하지 않는다! 메카 로봇에 타라!', 2.4);
     return;
@@ -808,55 +906,72 @@ function shootPistol() {
 
 function fireLaser(dt) {
   let t = aimRay();
-  let target = null;
-  if (boss && !boss.dead) {
-    const tb = Math.min(raySphere(vA, vDir, boss.x, 2.6 * boss.s, boss.z, 2.1 * boss.s) ?? 1e9, raySphere(vA, vDir, boss.x, 5.2 * boss.s, boss.z, 1.5 * boss.s) ?? 1e9);
-    if (tb < t) { t = tb; target = 'boss'; }
+  let target = null, bHit = null, zHit = null;
+  for (const b of bosses) {
+    if (b.dead) continue;
+    const tb = Math.min(raySphere(vA, vDir, b.x, 2.6 * b.s, b.z, 2.1 * b.s) ?? 1e9, raySphere(vA, vDir, b.x, 5.2 * b.s, b.z, 1.5 * b.s) ?? 1e9);
+    if (tb < t) { t = tb; target = 'boss'; bHit = b; }
   }
-  let zHit = null;
   for (const z of zombies) {
     if (z.dead) continue;
     const tz = Math.min(raySphere(vA, vDir, z.x, 1.0, z.z, 0.95) ?? 1e9, raySphere(vA, vDir, z.x, 1.75, z.z, 0.7) ?? 1e9);
     if (tz < t) { t = tz; target = 'zombie'; zHit = z; }
   }
   if (ballZ?.state === 'alive') {
-    const tb = raySphere(vA, vDir, ballZ.x, 1.7, ballZ.z, 1.6);
+    const tb = raySphere(vA, vDir, ballZ.x, 1.7 * ballZ.s, ballZ.z, 1.6 * ballZ.s);
     if (tb !== null && tb < t) { t = tb; target = 'ball'; }
   }
+  if (fz && (fz.state === 'run' || fz.state === 'p2' || fz.state === 'dizzy')) {
+    const tb = Math.min(raySphere(vA, vDir, fz.x, 1.6, fz.z, 1.5) ?? 1e9, raySphere(vA, vDir, fz.x, 3.1, fz.z, 1.1) ?? 1e9);
+    if (tb < t) { t = tb; target = 'fz'; }
+  }
+  const mult = EP === 3 ? 3 : 1;          // 3화의 더 센 메카는 레이저도 더 세다
   vB.copy(vA).addScaledVector(vDir, t);
   cannon.getWorldPosition(vA);
   laser.position.copy(vA).lerp(vB, 0.5);
   laser.lookAt(vB);
-  laser.scale.set(1 + Math.random() * 0.5, 1 + Math.random() * 0.5, vA.distanceTo(vB));
+  const thick = EP === 3 ? 2.2 : 1;
+  laser.scale.set(thick * (1 + Math.random() * 0.5), thick * (1 + Math.random() * 0.5), vA.distanceTo(vB));
   laser.visible = true;
-  laserHit.position.copy(vB); laserHit.scale.setScalar(0.7 + Math.random() * 0.6); laserHit.visible = true;
+  laserHit.position.copy(vB); laserHit.scale.setScalar(thick * (0.7 + Math.random() * 0.6)); laserHit.visible = true;
   if (Math.random() < 0.5) sfx.laser();
   if (target === 'zombie') killZombie(zHit);
   else if (target === 'boss') {
-    boss.hp -= boss.k.lz * dt;
-    if (boss.k === BOSS.armor) once('armor', '레이저를 맞아도 쓰러지지 않는다! 계속 쏴라!', 2.8);
+    bHit.hp -= bHit.k.lz * mult * dt;
+    if (boss !== bHit) focusBoss(bHit);
+    if (S.stage === 'e2boss') once('armor', '레이저를 맞아도 쓰러지지 않는다! 계속 쏴라!', 2.8);
     if (Math.random() < 0.4) burst(vB.x, vB.y, vB.z, 0xc040ff, 2, 5);
-    if (boss.hp <= 0) killBoss();
+    if (bHit.hp <= 0) killBoss(bHit);
   } else if (target === 'ball') {
     if (Math.random() < 0.4) burst(vB.x, vB.y, vB.z, 0x40ffff, 2, 5);
-    once('shield', '레이저가 튕겨 나간다! 가까이 가서 손으로 잡아 던져라!', 3.2);
+    if (ballZ.hp === null) once('shield', '레이저가 튕겨 나간다! 가까이 가서 손으로 잡아 던져라!', 3.2);
+    else if ((ballZ.hp -= 14 * mult * dt) <= 0) {
+      sfx.boom(); S.shake = 0.5;
+      burst(ballZ.x, 2.5, ballZ.z, 0x9a50e0, 30, 9, 0.3);
+      world.remove(ballZ.g); ballZ = null; clearBalls();
+      setStage('e3gate');
+      say('공 던지는 좀비를 없앴다! 문을 열자', 3.2);
+    }
+  } else if (target === 'fz' && fz.state !== 'dizzy') {
+    fz.hp -= fz.lz * mult * dt;
+    if (Math.random() < 0.4) burst(vB.x, vB.y, vB.z, 0x20ffff, 2, 5);
   }
 }
 
-function killBoss() {
-  boss.hp = 0; boss.dead = 0.001;
+function killBoss(b) {
+  b.hp = 0; b.dead = 0.001;
   sfx.boom(); S.shake = 0.6;
-  burst(boss.x, 3 * boss.s, boss.z, 0xc040ff, 30, 9, 0.3);
+  burst(b.x, 3 * b.s, b.z, 0xc040ff, 30, 9, 0.3);
   if (S.stage === 'boss') {
-    P.hp = 100;
+    P.hp = P.max;
     setStage('gate');
     say('가장 센 좀비를 쓰러뜨렸다! 큰 문을 열자', 3.5);
   } else if (S.stage === 'e2boss') {
     setStage('e2gate');
     say('겨우 이겼다…! 문을 열자', 3.5);
   } else {
-    $('bosswrap').classList.add('hidden');
-    say('조금 더 센 좀비를 쓰러뜨렸다!', 2.5);
+    if (boss === b) { boss = null; $('bosswrap').classList.add('hidden'); }
+    say(b.k.name + '를 쓰러뜨렸다!', 2.2);
   }
 }
 
@@ -998,58 +1113,64 @@ function updateHorde(dt) {
     }
     z.g.position.set(z.x, 0, z.z);
     z.atk -= dt;
-    if (Math.hypot(P.x - z.x, P.z - z.z) < (P.inMecha ? 2.2 : 1.2) && z.atk <= 0 && S.hitCd <= 0) { z.atk = 1.1; S.hitCd = 0.25; hurt(4); }
+    if (Math.hypot(P.x - z.x, P.z - z.z) < (P.inMecha ? 2.2 : 1.2) && z.atk <= 0 && S.hitCd <= 0) { z.atk = 1.1; S.hitCd = EP === 3 ? 0.5 : 0.25; hurt(4); }
   }
   zombies = zombies.filter((z) => !z.gone);
   while (S.toSpawn > 0 && alive < HORDE_MAX) { spawnHordeZombie(); S.toSpawn--; alive++; }
   if (alive > 0 || S.toSpawn > 0 || S.cine) return;
   if (S.stage === 'horde1') {
-    P.hp = 100;
+    P.hp = P.max;
     setStage('horde2'); startHorde(50); spawnBoss('strong');
     sfx.roar(); S.shake = 0.5;
     say('좀비 50마리와 조금 더 센 좀비가 나타났다!', 3.6);
-  } else if (boss?.dead) {
+  } else if (S.stage === 'horde2' && bosses.every((b) => b.dead)) {
     S.cine = { type: 'end', t: 0 };
     setStage('win');
     $('fade').style.opacity = 1; sfx.win();
+  } else if (S.stage === 'e3war' && bosses.every((b) => b.dead)) {
+    P.hp = P.max;
+    setStage('e3door');
+    doorCover.visible = false; exitDoor.visible = true; exitDoor.userData.y = -BIG_H;   // 문이 바닥에서 솟아오른다
+    sfx.key(); S.shake = 0.4;
+    say('다 없앴다! 문이 생겼다!', 3.2);
   }
 }
 
-function updateBoss(dt) {
-  if (!boss) return;
-  if (boss.dead) {
-    boss.dead += dt;
-    const k = Math.min(1, boss.dead / 0.9);
-    boss.g.rotation.x = -k * Math.PI / 2; boss.g.position.y = k * 0.8 * boss.s;
+function updateOneBoss(b, dt) {
+  if (!b) return;
+  if (b.dead) {
+    b.dead += dt;
+    const k = Math.min(1, b.dead / 0.9);
+    b.g.rotation.x = -k * Math.PI / 2; b.g.position.y = k * 0.8 * b.s;
     return;
   }
-  $('bossbar').style.width = boss.hp + '%';
-  const dx = P.x - boss.x, dz = P.z - boss.z, d = Math.hypot(dx, dz);
-  const reach = (P.inMecha ? 4.6 : 3.4) * boss.s;
-  boss.atk -= dt;
-  if (boss.wind > 0) {
-    boss.wind -= dt;
-    boss.g.userData.armL.position.y = boss.g.userData.armR.position.y = 1.35 + Math.sin((0.5 - boss.wind) * Math.PI * 2) * 0.5;
-    if (boss.wind <= 0) {
+  if (b === boss) $('bossbar').style.width = b.hp + '%';
+  const dx = P.x - b.x, dz = P.z - b.z, d = Math.hypot(dx, dz);
+  const reach = (P.inMecha ? 4.6 : 3.4) * b.s;
+  b.atk -= dt;
+  if (b.wind > 0) {
+    b.wind -= dt;
+    b.g.userData.armL.position.y = b.g.userData.armR.position.y = 1.35 + Math.sin((0.5 - b.wind) * Math.PI * 2) * 0.5;
+    if (b.wind <= 0) {
       S.shake = 0.3; sfx.boom();
-      if (d < reach + 0.8) hurt(P.inMecha ? boss.k.dm : boss.k.df);
+      if (d < reach + 0.8 && S.bossCd <= 0) { S.bossCd = bosses.length > 1 ? 1.0 : 0; hurt(P.inMecha ? b.k.dm : b.k.df); }
     }
-  } else if (d < reach && boss.atk <= 0) { boss.wind = 0.5; boss.atk = 1.7; }
+  } else if (d < reach && b.atk <= 0) { b.wind = 0.5; b.atk = 1.7; }
   else if (d > reach * 0.7) {
-    const sp = boss.k.sp * (boss.hp < 50 ? 1.25 : 1) * dt;
-    moveCircle(boss, dx / d * sp, dz / d * sp, 1.3 * boss.s);
-    boss.ph += dt * 6; walkAnim(boss.g, boss.ph);
+    const sp = b.k.sp * (b.hp < 50 ? 1.25 : 1) * dt;
+    moveCircle(b, dx / d * sp, dz / d * sp, 1.3 * b.s);
+    b.ph += dt * 6; walkAnim(b.g, b.ph);
   }
-  boss.g.rotation.y = Math.atan2(dx, dz);
-  boss.g.position.set(boss.x, 0, boss.z);
+  b.g.rotation.y = Math.atan2(dx, dz);
+  b.g.position.set(b.x, 0, b.z);
 }
+function updateBoss(dt) { S.bossCd -= dt; for (const b of bosses) updateOneBoss(b, dt); }
 
 const ballGeo = new THREE.SphereGeometry(0.42, 8, 6);
 function updateBallZ(dt) {
-  if (!ballZ) return;
-  if (ballZ.state === 'alive') {
+  if (ballZ?.state === 'alive') {
     ballZ.ph += dt;
-    ballZ.x = tc(7) + Math.sin(ballZ.ph * 0.7) * 9;
+    ballZ.x = ballZ.cx + Math.sin(ballZ.ph * 0.7) * ballZ.amp;
     const dx = P.x - ballZ.x, dz = P.z - ballZ.z;
     ballZ.g.rotation.y = Math.atan2(dx, dz);
     ballZ.g.position.set(ballZ.x, 0, ballZ.z);
@@ -1059,10 +1180,10 @@ function updateBallZ(dt) {
     if (ballZ.cd <= 0) {
       ballZ.cd = 1.5;
       const m = new THREE.Mesh(ballGeo, mat(0xff4040));
-      const ox = ballZ.x, oy = 2.6, oz = ballZ.z;
+      const ox = ballZ.x, oy = 2.6 * ballZ.s, oz = ballZ.z;
       const ty = P.eye - 0.5, ddx = P.x - ox, ddy = ty - oy, ddz = P.z - oz, dd = Math.hypot(ddx, ddy, ddz) || 1, sp = 15;
       m.position.set(ox, oy, oz); scene.add(m);
-      balls.push({ m, vx: ddx / dd * sp, vy: ddy / dd * sp, vz: ddz / dd * sp, life: 5 });
+      balls.push({ m, vx: ddx / dd * sp, vy: ddy / dd * sp, vz: ddz / dd * sp, life: 5, dmg: ballZ.dmg });
       tone(400, 0.12, 'square', 0.06, 200);
     }
   }
@@ -1070,11 +1191,75 @@ function updateBallZ(dt) {
     const b = balls[i], p = b.m.position;
     p.x += b.vx * dt; p.y += b.vy * dt; p.z += b.vz * dt; b.life -= dt;
     b.m.rotation.x += dt * 9;
-    const hitR = P.inMecha ? 1.7 : 0.7, cy = P.inMecha ? P.eye - 1.2 : P.eye - 0.6;
+    const hitR = P.inMecha ? (EP === 3 ? 2.2 : 1.7) : 0.7, cy = P.inMecha ? P.eye - 1.2 : P.eye - 0.6;
     const hit = Math.hypot(p.x - P.x, p.z - P.z) < hitR && Math.abs(p.y - cy) < (P.inMecha ? 2.6 : 1.1);
-    if (hit) { hurt(10); burst(p.x, p.y, p.z, 0xff4040, 8); }      // 공에 맞으면 체력의 1/10 감소
+    if (hit) { hurt(b.dmg); burst(p.x, p.y, p.z, 0xff4040, 8); }    // 1화 공: 10, 3화 공: 20, 불가사리: 15
     if (hit || b.life <= 0 || p.y < 0.3 || solidAt(p.x, p.z)) { scene.remove(b.m); balls.splice(i, 1); }
   }
+}
+
+// 불가사리 (엄청 빠른 좀비 2페이지의 공격)
+const starShape = new THREE.Shape();
+for (let i = 0; i < 10; i++) {
+  const r = i % 2 ? 0.26 : 0.62, a = i * Math.PI / 5;
+  if (i) starShape.lineTo(Math.sin(a) * r, Math.cos(a) * r); else starShape.moveTo(Math.sin(a) * r, Math.cos(a) * r);
+}
+const starGeo = new THREE.ExtrudeGeometry(starShape, { depth: 0.16, bevelEnabled: false });
+
+function updateFz(dt) {
+  const e = fz;
+  if (!e || S.cine) return;
+  $('bossbar').style.width = Math.max(0, e.hp / e.max * 100) + '%';
+  const dx = P.x - e.x, dz = P.z - e.z, d = Math.hypot(dx, dz) || 1;
+  const ux = dx / d, uz = dz / d;
+  e.dirT -= dt;
+  if (e.dirT <= 0) { e.dirT = 1.5 + rnd() * 2.5; e.dir = -e.dir; }
+  if (e.state === 'run') {
+    // 달려들어 2초마다 15 데미지, 치고 빠진다
+    e.atk -= dt;
+    let mx = 0, mz = 0;
+    if (e.back > 0) { e.back -= dt; mx = -ux * 8; mz = -uz * 8; }
+    else if (d > 3.6) { mx = ux * 10; mz = uz * 10; }
+    else if (e.atk <= 0) { e.atk = 2; e.back = 0.6; hurt(15); S.shake = 0.3; }
+    else { mx = -uz * 7 * e.dir; mz = ux * 7 * e.dir; }
+    moveCircle(e, mx * dt, mz * dt, 0.6);
+    e.ph += dt * 22; walkAnim(e.g, e.ph);
+    e.g.rotation.set(0, Math.atan2(dx, dz), 0);
+    if (e.hp <= 0) {
+      e.hp = 0; e.state = 'dizzy';
+      sfx.die();
+      say('비틀거린다! 다가가서 손으로 땅에 꽂아라!', 3.5);
+    }
+  } else if (e.state === 'dizzy') {
+    e.ph += dt * 5;
+    e.g.rotation.set(0, e.g.rotation.y + dt * 2, Math.sin(e.ph) * 0.3);
+  } else if (e.state === 'p2') {
+    // 거리를 두고 빙빙 돌며 손에서 불가사리를 쏜다
+    const radial = d > 16 ? 1 : d < 11 ? -1 : 0;
+    moveCircle(e, (ux * radial * 4 - uz * 6 * e.dir) * dt, (uz * radial * 4 + ux * 6 * e.dir) * dt, 0.6);
+    e.ph += dt * 16; walkAnim(e.g, e.ph);
+    e.g.rotation.set(0, Math.atan2(dx, dz), 0);
+    e.cd -= dt;
+    e.g.userData.armL.position.y = e.g.userData.armR.position.y = 1.35 + (e.cd < 0.3 ? 0.35 : 0);
+    if (e.cd <= 0) {
+      e.cd = 1.3;
+      const m = new THREE.Mesh(starGeo, mat(0xff8a30));
+      const oy = 2.6, ty = P.eye - 0.8, ddx = P.x - e.x, ddy = ty - oy, ddz = P.z - e.z, dd = Math.hypot(ddx, ddy, ddz) || 1, sp = 17;
+      m.position.set(e.x, oy, e.z); scene.add(m);
+      balls.push({ m, vx: ddx / dd * sp, vy: ddy / dd * sp, vz: ddz / dd * sp, life: 5, dmg: 15 });
+      tone(700, 0.1, 'square', 0.06, -300);
+    }
+    if (e.hp <= 0) {
+      e.state = 'dead';
+      sfx.boom(); S.shake = 0.7;
+      burst(e.x, 2, e.z, 0xff8a30, 40, 10, 0.3);
+      world.remove(e.g); clearBalls();
+      S.cine = { type: 'end', t: 0 };
+      setStage('win');
+      $('fade').style.opacity = 1; sfx.win();
+    }
+  }
+  if (e.state !== 'dead') e.g.position.set(e.x, 0, e.z);
 }
 
 function updateCine(dt) {
@@ -1116,13 +1301,55 @@ function updateCine(dt) {
         say('공 던지는 좀비가 사라졌다! 문이 생겼다!', 3.5);
       }
     }
+  } else if (c.type === 'slam') {
+    // 더 센 메카의 손으로 붙잡아 들어 올린 뒤 땅에 꽂는다
+    const z = fz;
+    const follow = () => {
+      hand.getWorldPosition(vA); camera.getWorldDirection(vDir);
+      return vB.set(vA.x + vDir.x * 2.2, vA.y - 1.8, vA.z + vDir.z * 2.2);
+    };
+    if (c.t < 0.5) {
+      const k = c.t / 0.5;
+      hand.position.z = -1.3 - k * 0.9;
+      z.g.position.lerp(follow(), Math.min(1, k * 1.3));
+    } else if (c.t < 0.95) {
+      const k = (c.t - 0.5) / 0.45;
+      hand.position.y = -0.75 + k * 1.1;
+      z.g.position.copy(follow());
+      z.g.rotation.set(k * Math.PI, z.g.rotation.y, 0);
+    } else if (c.t < 1.15) {
+      const k = (c.t - 0.95) / 0.2;
+      hand.position.y = 0.35 - k * 1.5;
+      if (!c.g) { c.g = { x: P.x - Math.sin(P.yaw) * 5, z: P.z - Math.cos(P.yaw) * 5, y: z.g.position.y }; }
+      z.g.position.set(c.g.x, c.g.y + (2.3 - c.g.y) * k, c.g.z);      // 머리부터 땅에 박힌다
+      z.g.rotation.x = Math.PI;
+    } else if (c.t < 2.5) {
+      if (!c.hit) {
+        c.hit = true;
+        sfx.boom(); S.shake = 0.8;
+        burst(c.g.x, 0.3, c.g.z, 0x8a6a4a, 30, 8, 0.3);
+        say('땅에 꽂아버렸다!', 1.4);
+      }
+      hand.position.set(1.0, -0.75, -1.3);
+      walkAnim(z.g, c.t * 24, 0.8);
+    } else if (c.t < 3.4) {
+      if (!c.up) { c.up = true; sfx.roar(); say('…다시 일어난다! 2페이지!', 2.6); }
+      const k = (c.t - 2.5) / 0.9;
+      z.g.position.y = 2.3 * (1 - k);
+      z.g.rotation.x = Math.PI * (1 - k);
+    } else {
+      S.cine = null;
+      S.flags.fz2 = 1;
+      spawnFz(2, c.g.x, c.g.z);
+    }
   } else if (c.type === 'end' && c.t > 1.5) {
     S.cine = null; S.running = false;
     const sec = Math.floor(S.time);
-    $('wintitle').textContent = EP === 1 ? '탈출 성공!' : '2화 클리어!';
+    $('wintitle').textContent = ['탈출 성공!', '2화 클리어!', '3화 클리어!'][EP - 1];
     $('wintime').textContent = `걸린 시간 ${Math.floor(sec / 60)}분 ${sec % 60}초`;
-    $('wintext').textContent = EP === 1 ? '좀비들을 물리치고 마지막 문으로 빠져나왔다.' : '좀비 떼와 조금 더 센 좀비까지 모두 물리쳤다!';
-    $('next').classList.toggle('hidden', EP !== 1);
+    $('wintext').textContent = ['좀비들을 물리치고 마지막 문으로 빠져나왔다.', '좀비 떼와 조금 더 센 좀비까지 모두 물리쳤다!', '엄청 빠른 좀비까지 더 센 메카로 끝장냈다!'][EP - 1];
+    $('next').classList.toggle('hidden', EP >= 3);
+    $('next').textContent = (EP + 1) + '화 계속하기';
     $('hud').classList.add('hidden');
     $('win').classList.remove('hidden');
   }
@@ -1165,7 +1392,7 @@ function update(dt) {
   P.inv = Math.max(0, P.inv - dt);
   // 체력 회복: 피해를 입지 않는 동안 10초마다 10씩 계속 회복
   P.regen += dt;
-  if (P.regen >= 10) { P.regen -= 10; if (P.hp > 0) P.hp = Math.min(100, P.hp + 10); }
+  if (P.regen >= 10) { P.regen -= 10; if (P.hp > 0) P.hp = Math.min(P.max, P.hp + 10); }
 
   // 이동
   let f = -stick.y, s = stick.x;
@@ -1178,8 +1405,8 @@ function update(dt) {
   const mag = Math.hypot(f, s);
   if (mag > 1) { f /= mag; s /= mag; }
   if (!P.hidden && !S.cine && mag > 0.05) {
-    const sp = (P.inMecha ? 6 : 5) * dt, sn = Math.sin(P.yaw), cs = Math.cos(P.yaw);
-    moveCircle(P, (-sn * f + cs * s) * sp, (-cs * f - sn * s) * sp, P.inMecha ? 1.25 : 0.4);
+    const sp = (P.inMecha ? (EP === 3 ? 6.5 : 6) : 5) * dt, sn = Math.sin(P.yaw), cs = Math.cos(P.yaw);
+    moveCircle(P, (-sn * f + cs * s) * sp, (-cs * f - sn * s) * sp, P.inMecha ? (EP === 3 ? 1.6 : 1.25) : 0.4);
     const before = Math.sin(P.bob);
     P.bob += dt * (P.inMecha ? 6 : 10) * Math.min(1, mag);
     if (P.inMecha && before > 0 && Math.sin(P.bob) <= 0) { tone(60, 0.12, 'square', 0.08); S.shake = Math.max(S.shake, 0.08); }
@@ -1212,7 +1439,7 @@ function update(dt) {
   if (S.stage === 'maze' && P.z > tc(15) + 0.4) {
     zombies.forEach((z) => world.remove(z.g)); zombies = [];
     setDoor(exitDoor, EXIT_TILES, false);
-    P.hp = 100;
+    P.hp = P.max;
     setStage('boss'); spawnBoss();
     sfx.roar(); S.shake = 0.6;
     say('가장 센 좀비가 나타났다! 옆의 메카 로봇에 타라!', 3.6);
@@ -1222,7 +1449,7 @@ function update(dt) {
   if (S.stage === 'chase' && P.z > tc(35) + 0.4) {
     world.remove(chaser.g); chaser = null;
     setDoor(exitDoor, EXIT_TILES, false);
-    P.hp = 100;
+    P.hp = P.max;
     mechaModel.position.set(MECHA_PARK.x, 0, MECHA_PARK.z); mechaModel.visible = true;
     setStage('horde1'); startHorde(25);
     sfx.roar(); S.shake = 0.5;
@@ -1241,7 +1468,8 @@ function update(dt) {
 
   if (S.stage === 'maze') updateZombies(dt);
   if (S.stage === 'chase') updateChaser(dt);
-  if (S.stage === 'horde1' || S.stage === 'horde2') updateHorde(dt);
+  if (S.stage === 'horde1' || S.stage === 'horde2' || S.stage === 'e3war') updateHorde(dt);
+  if (S.stage === 'e3fast') updateFz(dt);
   updateBoss(dt);
   updateBallZ(dt);
   if (S.cine) updateCine(dt);
@@ -1254,7 +1482,7 @@ function update(dt) {
   }
 
   // 카메라
-  const eyeT = P.hidden ? 1.5 : P.inMecha ? 4.3 : 1.6;
+  const eyeT = P.hidden ? 1.5 : P.inMecha ? (EP === 3 ? 5.6 : 4.3) : 1.6;
   P.eye += (eyeT - P.eye) * Math.min(1, dt * 5);
   S.shake = Math.max(0, S.shake - dt);
   const sh = S.shake * 0.25;
@@ -1266,8 +1494,8 @@ function update(dt) {
   hudT -= dt;
   if (hudT <= 0) {
     hudT = 0.1;
-    $('hpbar').style.width = P.hp + '%';
-    $('hptext').textContent = '체력 ' + Math.ceil(P.hp);
+    $('hpbar').style.width = (P.hp / P.max * 100) + '%';
+    $('hptext').textContent = '체력 ' + Math.ceil(P.hp) + (P.max !== 100 ? ' / ' + P.max : '');
     document.querySelectorAll('#keys span').forEach((e, i) => e.classList.toggle('on', i < P.keys));
     $('objective').textContent = OBJ[S.stage]?.() ?? '';
     if (S.stage === 'maze' || S.stage === 'chase') drawMinimap();
@@ -1301,4 +1529,4 @@ camera.rotation.set(0, Math.PI, 0);
 requestAnimationFrame(frame);
 
 // 테스트/디버그용
-window.__zg = { P, S, keys, closets, get grid() { return grid; }, get GW() { return GW; }, get EP() { return EP; }, get zombies() { return zombies; }, get boss() { return boss; }, get ballZ() { return ballZ; }, get chaser() { return chaser; }, get exitDoor() { return exitDoor; }, get gate() { return gate; }, get mecha() { return mechaModel; }, startStage, newGame, update, T };
+window.__zg = { P, S, keys, closets, get grid() { return grid; }, get GW() { return GW; }, get EP() { return EP; }, get zombies() { return zombies; }, get boss() { return boss; }, get bosses() { return bosses; }, get fz() { return fz; }, get ballZ() { return ballZ; }, get chaser() { return chaser; }, get exitDoor() { return exitDoor; }, get gate() { return gate; }, get mecha() { return mechaModel; }, startStage, newGame, update, T };

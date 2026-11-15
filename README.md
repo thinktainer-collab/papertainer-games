@@ -8,6 +8,7 @@ A small game studio, currently in beta testing. Browser games you can play insta
 - **좀비 미로 탈출 (Zombie Maze Escape)** — `zombie-maze/`
   3D first-person mobile game. Episode 1: find four keys and escape the maze.
   Episode 2: a chase through a larger maze and zombie hordes.
+  Episode 3: a bigger mecha, a five-boss battle and a very fast two-phase zombie.
 
 ## Structure
 
