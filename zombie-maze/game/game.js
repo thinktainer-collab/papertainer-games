@@ -433,7 +433,7 @@ const sfx = {
 // ───────────────────────── 게임 상태 ─────────────────────────
 const P = { x: 0, z: 0, yaw: Math.PI, pitch: 0, eye: 1.6, hp: 100, max: 100, regen: 0, inv: 0, hideT: 0, keys: 0, hidden: null, inMecha: false, hurtCd: 0, bob: 0 };
 const S = { stage: 'title', running: false, time: 0, fireCd: 0, cine: null, msgT: 0, flags: {}, shake: 0, toSpawn: 0, hitCd: 0, bossCd: 0, area: { c0: 1, c1: 21, r0: 36, r1: 48 } };
-let zombies = [], bosses = [], boss = null, ballZ = null, balls = [], chaser = null, fz = null;   // boss = 체력바에 표시 중인 보스
+let zombies = [], bosses = [], boss = null, ballZ = null, balls = [], chaser = null, fz = null, gz = null, cy = null;   // boss = 체력바에 표시 중인 보스
 let distMap = new Int16Array(GW * GH);
 let explored = new Uint8Array(GW * GH);
 let distT = 0;
@@ -454,6 +454,10 @@ const OBJ = {
   e3war: () => `남은 적: 좀비 ${hordeLeft()} · 센 좀비 ${bosses.filter((b) => !b.dead).length}`,
   e3door: () => '새로 생긴 문을 열어라',
   e3fast: () => !fz ? '' : fz.state === 'dizzy' ? '다가가서 손으로 땅에 꽂아라!' : fz.phase === 1 ? '엄청 빠른 좀비를 레이저로 약하게 만들어라!' : '불가사리를 피하며 레이저로 끝내라!',
+  e4gun: () => '레이저로 총 쏘는 좀비를 없애라!',
+  e4gate: () => '문을 열어라',
+  e4cy: () => !cy ? '' : cy.state === 'flying' ? '' : '레이저로 공격하고, 가까이 오면 집게로 날려라!',
+  e4door: () => '새로 생긴 문을 열어라',
   win: () => '',
 };
 const hordeLeft = () => zombies.filter((z) => !z.dead).length + S.toSpawn;
@@ -505,8 +509,8 @@ function setMecha(on) {
   mechArms.visible = on; gun.visible = !on;
   $('cockpit').classList.toggle('hidden', !on);
   $('fire').textContent = on ? '레이저' : '발사';
-  if (EP === 3) { P.max = on ? 300 : 100; P.hp = P.max; }      // 3화의 더 큰 메카: 탑승 중 체력 300
-  mechArms.scale.setScalar(EP === 3 ? 1.35 : 1);
+  if (EP >= 3) { P.max = on ? 300 : 100; P.hp = P.max; }      // 3화부터 나오는 더 큰 메카: 탑승 중 체력 300
+  mechArms.scale.setScalar(EP >= 3 ? 1.35 : 1);
 }
 
 const BOSS = {
@@ -549,6 +553,149 @@ function spawnFz(phase = 1, x = tc(11), z = tc(42)) {
   $('bossname').textContent = phase === 1 ? '엄청 빠른 좀비' : '엄청 빠른 좀비 · 2페이지';
   $('bossbar').style.width = '100%';
   $('bosswrap').classList.remove('hidden');
+}
+
+// 4화: 총 쏘는 좀비 (더 센 메카의 레이저로 없어진다)
+function spawnGunZ() {
+  if (gz) world.remove(gz.g);
+  const g = makeZombie(0x6f9a4a, 0x2f3a24, 0xff3020);
+  box(g, 0.14, 0.2, 0.75, 0.46, 1.45, 0.75, 0x202228);          // 손에 든 총
+  box(g, 0.5, 0.14, 0.5, 0, 2.1, 0, 0x2f3a24);                    // 모자
+  g.scale.setScalar(1.6);
+  g.position.set(tc(11), 0, tc(10));
+  world.add(g);
+  gz = { g, x: tc(11), z: tc(10), hp: 40, cd: 2, ph: 0, dir: 1, dirT: 2, flash: 0, dead: 0 };
+}
+const bulletGeo = new THREE.BoxGeometry(0.16, 0.16, 0.5);
+function updateGunZ(dt) {
+  const e = gz;
+  if (!e) return;
+  if (e.dead) {
+    e.dead += dt;
+    const k = Math.min(1, e.dead / 0.4);
+    e.g.rotation.x = -k * Math.PI / 2; e.g.position.y = k * 0.4;
+    return;
+  }
+  const dx = P.x - e.x, dz = P.z - e.z, d = Math.hypot(dx, dz) || 1;
+  e.dirT -= dt;
+  if (e.dirT <= 0) { e.dirT = 1.2 + rnd() * 2; e.dir = -e.dir; }
+  // 옆으로 움직이며 거리를 둔다
+  const radial = d > 16 ? 1 : d < 10 ? -1 : 0;
+  moveCircle(e, ((dx / d) * radial * 3 - (dz / d) * 4.5 * e.dir) * dt, ((dz / d) * radial * 3 + (dx / d) * 4.5 * e.dir) * dt, 0.5);
+  e.ph += dt * 10; walkAnim(e.g, e.ph);
+  e.g.rotation.y = Math.atan2(dx, dz);
+  e.g.position.set(e.x, 0, e.z);
+  e.cd -= dt;
+  if (e.cd <= 0 && los(e.x, e.z, P.x, P.z)) {
+    e.cd = 1.5;                                                     // 1.5초마다 한 발, 10 데미지
+    const m = new THREE.Mesh(bulletGeo, glow(0xffe060));
+    const oy = 2.3, ty = P.eye - 1.0, ddx = P.x - e.x, ddy = ty - oy, ddz = P.z - e.z, dd = Math.hypot(ddx, ddy, ddz) || 1, sp = 24;
+    m.position.set(e.x, oy, e.z); m.lookAt(P.x, ty, P.z); scene.add(m);
+    balls.push({ m, vx: ddx / dd * sp, vy: ddy / dd * sp, vz: ddz / dd * sp, life: 3, dmg: 10, spin: false });
+    burst(e.x + (dx / d) * 1.2, oy, e.z + (dz / d) * 1.2, 0xffe060, 3, 2, 0.1);
+    tone(900, 0.07, 'square', 0.07, -600);
+  }
+}
+function killGunZ() {
+  gz.hp = 0; gz.dead = 0.001;
+  sfx.die(); S.shake = 0.3;
+  burst(gz.x, 2, gz.z, 0x6fd04a, 16, 6);
+  clearBalls();
+  setStage('e4gate');
+  say('총 쏘는 좀비를 없앴다! 문을 열자', 3);
+}
+
+// 4화: 사이보그 좀비. 가까우면 주먹(20), 멀면 파이어 캐논(35), 죽을 때 폭발(30)
+function spawnCyborg() {
+  if (cy) world.remove(cy.g);
+  const g = makeZombie(0x9aa6b2, 0x3a4250, 0xff2a2a);
+  box(g, 0.74, 0.5, 0.44, 0, 1.25, 0.03, 0x606b7a);                // 가슴 장갑
+  box(g, 0.2, 0.1, 0.05, 0, 1.3, 0.26, glow(0x40e0ff));
+  box(g, 0.3, 0.3, 0.9, -0.5, 1.35, 0.4, 0x2a2f38);                 // 팔에 달린 파이어 캐논
+  box(g, 0.2, 0.2, 0.1, -0.5, 1.35, 0.88, glow(0xff7a20));
+  box(g, 0.32, 0.32, 0.32, 0.5, 1.35, 0.75, 0x9aa6b2);              // 주먹
+  g.scale.setScalar(2.2);
+  g.position.set(tc(11), 0, tc(25));
+  world.add(g);
+  cy = { g, x: tc(11), z: tc(25), y: 0, hp: 150, max: 150, state: 'walk', atk: 1.5, wind: 0, cd: 2.5, aim: 0, ph: 0, vx: 0, vy: 0, vz: 0, stun: 0 };
+  $('bossname').textContent = '사이보그 좀비';
+  $('bossbar').style.width = '100%';
+  $('bosswrap').classList.remove('hidden');
+}
+const fireGeo = new THREE.SphereGeometry(0.55, 8, 6);
+function explodeCyborg() {
+  const e = cy;
+  e.state = 'dead';
+  sfx.boom(); tone(50, 1.2, 'sawtooth', 0.22, -20); S.shake = 1;
+  burst(e.x, 2.5, e.z, 0xff7a20, 40, 12, 0.35); burst(e.x, 2, e.z, 0xffe060, 20, 8, 0.25);
+  world.remove(e.g);
+  clearBalls();
+  if (Math.hypot(P.x - e.x, P.z - e.z) < 8) hurt(30);              // 폭발에 휘말리면 30
+  if (P.hp <= 0) return;
+  $('bosswrap').classList.add('hidden');
+  setStage('e4door');
+  doorCover.visible = false; exitDoor.visible = true; exitDoor.userData.y = -BIG_H;
+  sfx.key();
+  say(Math.hypot(P.x - e.x, P.z - e.z) < 8 ? '폭발에 휘말렸다! 그래도 쓰러뜨렸다. 문이 생겼다!' : '사이보그 좀비가 폭발했다! 문이 생겼다!', 3.4);
+}
+function updateCyborg(dt) {
+  const e = cy;
+  if (!e || e.state === 'dead' || e.state === 'held') return;
+  $('bossbar').style.width = Math.max(0, e.hp / e.max * 100) + '%';
+  if (e.state === 'flying') {
+    // 집게로 날린 뒤: 날아가다 떨어진다
+    e.vy -= 22 * dt;
+    const nx = e.x + e.vx * dt, nz = e.z + e.vz * dt;
+    if (!solidAt(nx, nz)) { e.x = nx; e.z = nz; } else { e.vx *= -0.3; e.vz *= -0.3; }
+    e.y += e.vy * dt;
+    e.g.rotation.x += dt * 8;
+    if (e.y <= 0) {
+      e.y = 0; e.g.rotation.set(0, e.g.rotation.y, 0);
+      e.hp -= 50;                                                   // 바닥에 떨어지며 큰 피해
+      sfx.boom(); S.shake = 0.5;
+      burst(e.x, 0.4, e.z, 0x8a8a9a, 20, 7, 0.25);
+      if (e.hp <= 0) { e.hp = 0; explodeCyborg(); return; }
+      e.state = 'walk'; e.stun = 1.3;
+    }
+    e.g.position.set(e.x, e.y, e.z);
+    return;
+  }
+  const dx = P.x - e.x, dz = P.z - e.z, d = Math.hypot(dx, dz) || 1;
+  e.g.rotation.y = Math.atan2(dx, dz);
+  e.stun -= dt; e.atk -= dt; e.cd -= dt;
+  const u = e.g.userData;
+  if (e.stun > 0) {
+    e.g.rotation.z = Math.sin(e.stun * 14) * 0.15;
+  } else if (e.wind > 0) {
+    // 주먹 휘두르기
+    e.wind -= dt;
+    u.armR.position.z = 0.35 + Math.sin((0.5 - e.wind) * Math.PI * 2) * 0.4;
+    if (e.wind <= 0) {
+      u.armR.position.z = 0.35;
+      S.shake = 0.3; sfx.boom();
+      if (d < 7) hurt(20);
+    }
+  } else if (e.aim > 0) {
+    // 파이어 캐논 조준
+    e.aim -= dt;
+    if (e.aim <= 0) {
+      const m = new THREE.Mesh(fireGeo, glow(0xff6a10));
+      const oy = 3, ty = P.eye - 1.2, ddx = P.x - e.x, ddy = ty - oy, ddz = P.z - e.z, dd = Math.hypot(ddx, ddy, ddz) || 1, sp = 14;
+      m.position.set(e.x, oy, e.z); scene.add(m);
+      balls.push({ m, vx: ddx / dd * sp, vy: ddy / dd * sp, vz: ddz / dd * sp, life: 5, dmg: 35, fire: true });
+      tone(160, 0.5, 'sawtooth', 0.14, -100);
+    }
+  } else if (d < 5.5 && e.atk <= 0) {
+    e.wind = 0.5; e.atk = 1.6;
+  } else if (d > 9 && e.cd <= 0 && los(e.x, e.z, P.x, P.z)) {
+    e.aim = 0.5; e.cd = 3.2;
+    say('파이어 캐논! 피해라!', 1.2);
+  } else if (d > 4.5) {
+    moveCircle(e, dx / d * 3.4 * dt, dz / d * 3.4 * dt, 1.0);
+    e.ph += dt * 7; walkAnim(e.g, e.ph);
+  }
+  if (e.stun <= 0) e.g.rotation.z = 0;
+  e.g.position.set(e.x, 0, e.z);
 }
 
 // 3화: 문을 열면 나타나는 적들
@@ -619,7 +766,7 @@ function setStage(st) {
   scene.fog.far = mazeLike ? 30 : 70;
   scene.fog.near = mazeLike ? 3 : 8;
   $('minimap').classList.toggle('hidden', !mazeLike);
-  $('bosswrap').classList.toggle('hidden', !(st === 'boss' || st === 'e2boss' || st === 'horde2' || st === 'e3fast'));
+  $('bosswrap').classList.toggle('hidden', !(st === 'boss' || st === 'e2boss' || st === 'horde2' || st === 'e3fast' || st === 'e4cy'));
   $('keys').classList.toggle('hidden', EP !== 1);
 }
 
@@ -684,18 +831,34 @@ function startStage(st) {
     exitDoor.visible = true; doorCover.visible = false;
     clearBosses(); zombies.forEach((z) => world.remove(z.g)); zombies = [];
     spawnFz(S.flags.fz2 ? 2 : 1);          // 2페이지까지 갔다면 2페이지부터 다시
+  } else if (st === 'e4gun' || st === 'e4gate') {
+    P.x = tc(11); P.z = tc(2); P.yaw = Math.PI;
+    mechaModel.visible = false;
+    setMecha(true);
+    setDoor(gate, GATE_TILES, false); setDoor(exitDoor, EXIT_TILES, false);
+    exitDoor.visible = false; doorCover.visible = true;
+    if (st === 'e4gun') spawnGunZ();
+  } else if (st === 'e4cy' || st === 'e4door') {
+    P.x = tc(11); P.z = tc(11); P.yaw = Math.PI;
+    mechaModel.visible = false;
+    setMecha(true);
+    if (gz) { world.remove(gz.g); gz = null; }
+    setDoor(gate, GATE_TILES, true); setDoor(exitDoor, EXIT_TILES, false);
+    exitDoor.visible = false; doorCover.visible = true;
+    spawnCyborg();
   }
 }
 
 function newGame(ep = 1) {
   EP = ep;
   buildWorld();
-  zombies = []; bosses = []; boss = null; ballZ = null; chaser = null; fz = null;
+  zombies = []; bosses = []; boss = null; ballZ = null; chaser = null; fz = null; gz = null; cy = null;
+  closeOverlays();
   P.keys = 0; S.time = 0; S.flags = {}; S.toSpawn = 0;
   $('fade').style.opacity = 0;
-  startStage(['maze', 'e2boss', 'e3ball'][ep - 1]);
+  startStage(['maze', 'e2boss', 'e3ball', 'e4gun'][ep - 1]);
   S.running = true;
-  say(['열쇠 4개를 찾아 탈출하라!', '레이저를 맞아도 죽지 않는 좀비가 나타났다!', '공 던지는 좀비가 업그레이드돼서 돌아왔다! 더 큰 메카에 타라!'][ep - 1], 3.4);
+  say(['열쇠 4개를 찾아 탈출하라!', '레이저를 맞아도 죽지 않는 좀비가 나타났다!', '공 던지는 좀비가 업그레이드돼서 돌아왔다! 더 큰 메카에 타라!', '총 쏘는 좀비가 나타났다! 더 센 메카의 레이저로 없애라!'][ep - 1], 3.4);
 }
 
 // ───────────────────────── 입력 ─────────────────────────
@@ -783,11 +946,12 @@ function begin() {
 $('start').addEventListener('click', () => { begin(); newGame(1); });
 $('start2').addEventListener('click', () => { begin(); newGame(2); });
 $('start3').addEventListener('click', () => { begin(); newGame(3); });
+$('start4').addEventListener('click', () => { begin(); newGame(4); });
 $('again').addEventListener('click', () => { begin(); newGame(EP); });
 $('next').addEventListener('click', () => { begin(); newGame(EP + 1); });
 $('retry').addEventListener('click', () => {
   begin();
-  startStage({ gate: 'ball', final: 'ball', e2gate: 'e2boss', e3gate: 'e3ball', e3door: 'e3war' }[S.stage] || S.stage);
+  startStage({ gate: 'ball', final: 'ball', e2gate: 'e2boss', e3gate: 'e3ball', e3door: 'e3war', e4gate: 'e4gun', e4door: 'e4cy' }[S.stage] || S.stage);
   S.running = true;
 });
 
@@ -842,6 +1006,18 @@ function findAction() {
   if (S.stage === 'e3fast' && fz?.state === 'dizzy' && near(fz.x, fz.z, 8)) return ['땅에\n꽂기', () => {
     S.cine = { type: 'slam', t: 0 }; fz.state = 'held';
     clearBalls(); laser.visible = laserHit.visible = false;
+  }];
+  if (S.stage === 'e4gate' && near(gate.position.x, gate.position.z, 7.5)) return ['문 열기', () => {
+    sfx.door();
+    openMemory();
+  }];
+  if (S.stage === 'e4cy' && cy && (cy.state === 'walk') && near(cy.x, cy.z, 7.5)) return ['집게로\n날리기', () => {
+    S.cine = { type: 'clamp', t: 0 }; cy.state = 'held'; cy.wind = 0; cy.aim = 0;
+    clearBalls(); laser.visible = laserHit.visible = false;
+  }];
+  if (S.stage === 'e4door' && near(exitDoor.position.x, exitDoor.position.z, 7.5)) return ['문 열기', () => {
+    setDoor(exitDoor, EXIT_TILES, true); sfx.door();
+    openHidden();
   }];
   if (S.stage === 'gate' && near(tc(7), tc(27), 6.5)) return ['문 열기', () => {
     setDoor(gate, GATE_TILES, true); sfx.door();
@@ -921,16 +1097,24 @@ function fireLaser(dt) {
     const tb = raySphere(vA, vDir, ballZ.x, 1.7 * ballZ.s, ballZ.z, 1.6 * ballZ.s);
     if (tb !== null && tb < t) { t = tb; target = 'ball'; }
   }
+  if (gz && !gz.dead) {
+    const tb = Math.min(raySphere(vA, vDir, gz.x, 1.6, gz.z, 1.2) ?? 1e9, raySphere(vA, vDir, gz.x, 2.9, gz.z, 0.9) ?? 1e9);
+    if (tb < t) { t = tb; target = 'gz'; }
+  }
+  if (cy && (cy.state === 'walk')) {
+    const tb = Math.min(raySphere(vA, vDir, cy.x, 2.2, cy.z, 1.7) ?? 1e9, raySphere(vA, vDir, cy.x, 4, cy.z, 1.2) ?? 1e9);
+    if (tb < t) { t = tb; target = 'cy'; }
+  }
   if (fz && (fz.state === 'run' || fz.state === 'p2' || fz.state === 'dizzy')) {
     const tb = Math.min(raySphere(vA, vDir, fz.x, 1.6, fz.z, 1.5) ?? 1e9, raySphere(vA, vDir, fz.x, 3.1, fz.z, 1.1) ?? 1e9);
     if (tb < t) { t = tb; target = 'fz'; }
   }
-  const mult = EP === 3 ? 3 : 1;          // 3화의 더 센 메카는 레이저도 더 세다
+  const mult = EP >= 3 ? 3 : 1;          // 3화의 더 센 메카는 레이저도 더 세다
   vB.copy(vA).addScaledVector(vDir, t);
   cannon.getWorldPosition(vA);
   laser.position.copy(vA).lerp(vB, 0.5);
   laser.lookAt(vB);
-  const thick = EP === 3 ? 2.2 : 1;
+  const thick = EP >= 3 ? 2.2 : 1;
   laser.scale.set(thick * (1 + Math.random() * 0.5), thick * (1 + Math.random() * 0.5), vA.distanceTo(vB));
   laser.visible = true;
   laserHit.position.copy(vB); laserHit.scale.setScalar(thick * (0.7 + Math.random() * 0.6)); laserHit.visible = true;
@@ -952,6 +1136,14 @@ function fireLaser(dt) {
       setStage('e3gate');
       say('공 던지는 좀비를 없앴다! 문을 열자', 3.2);
     }
+  } else if (target === 'gz') {
+    gz.hp -= 30 * mult * dt;
+    if (Math.random() < 0.4) burst(vB.x, vB.y, vB.z, 0x6fd04a, 2, 5);
+    if (gz.hp <= 0) killGunZ();
+  } else if (target === 'cy') {
+    cy.hp -= 8 * mult * dt;
+    if (Math.random() < 0.4) burst(vB.x, vB.y, vB.z, 0x9aa6b2, 2, 5);
+    if (cy.hp <= 0) { cy.hp = 0; explodeCyborg(); }
   } else if (target === 'fz' && fz.state !== 'dizzy') {
     fz.hp -= fz.lz * mult * dt;
     if (Math.random() < 0.4) burst(vB.x, vB.y, vB.z, 0x20ffff, 2, 5);
@@ -1113,7 +1305,7 @@ function updateHorde(dt) {
     }
     z.g.position.set(z.x, 0, z.z);
     z.atk -= dt;
-    if (Math.hypot(P.x - z.x, P.z - z.z) < (P.inMecha ? 2.2 : 1.2) && z.atk <= 0 && S.hitCd <= 0) { z.atk = 1.1; S.hitCd = EP === 3 ? 0.5 : 0.25; hurt(4); }
+    if (Math.hypot(P.x - z.x, P.z - z.z) < (P.inMecha ? 2.2 : 1.2) && z.atk <= 0 && S.hitCd <= 0) { z.atk = 1.1; S.hitCd = EP >= 3 ? 0.5 : 0.25; hurt(4); }
   }
   zombies = zombies.filter((z) => !z.gone);
   while (S.toSpawn > 0 && alive < HORDE_MAX) { spawnHordeZombie(); S.toSpawn--; alive++; }
@@ -1190,10 +1382,11 @@ function updateBallZ(dt) {
   for (let i = balls.length - 1; i >= 0; i--) {
     const b = balls[i], p = b.m.position;
     p.x += b.vx * dt; p.y += b.vy * dt; p.z += b.vz * dt; b.life -= dt;
-    b.m.rotation.x += dt * 9;
-    const hitR = P.inMecha ? (EP === 3 ? 2.2 : 1.7) : 0.7, cy = P.inMecha ? P.eye - 1.2 : P.eye - 0.6;
+    if (b.spin !== false) b.m.rotation.x += dt * 9;
+    if (b.fire && Math.random() < 0.5) burst(p.x, p.y, p.z, 0xff9a30, 1, 1, 0.18);
+    const hitR = P.inMecha ? (EP >= 3 ? 2.2 : 1.7) : 0.7, cy = P.inMecha ? P.eye - 1.2 : P.eye - 0.6;
     const hit = Math.hypot(p.x - P.x, p.z - P.z) < hitR && Math.abs(p.y - cy) < (P.inMecha ? 2.6 : 1.1);
-    if (hit) { hurt(b.dmg); burst(p.x, p.y, p.z, 0xff4040, 8); }    // 1화 공: 10, 3화 공: 20, 불가사리: 15
+    if (hit) { hurt(b.dmg); burst(p.x, p.y, p.z, b.fire ? 0xff7a20 : 0xff4040, b.fire ? 16 : 8); }    // 1화 공 10, 3화 공 20, 불가사리 15, 총알 10, 파이어 캐논 35
     if (hit || b.life <= 0 || p.y < 0.3 || solidAt(p.x, p.z)) { scene.remove(b.m); balls.splice(i, 1); }
   }
 }
@@ -1342,13 +1535,42 @@ function updateCine(dt) {
       S.flags.fz2 = 1;
       spawnFz(2, c.g.x, c.g.z);
     }
+  } else if (c.type === 'clamp') {
+    // 메카 손의 집게로 사이보그를 붙잡아 멀리 날린다
+    const z = cy;
+    const follow = () => {
+      hand.getWorldPosition(vA); camera.getWorldDirection(vDir);
+      return vB.set(vA.x + vDir.x * 2.4, Math.max(0, vA.y - 2.4), vA.z + vDir.z * 2.4);
+    };
+    if (c.t < 0.45) {
+      const k = c.t / 0.45;
+      hand.position.z = -1.3 - k * 0.9;
+      z.g.position.lerp(follow(), Math.min(1, k * 1.4));
+      if (!c.snap && k > 0.8) { c.snap = true; tone(1200, 0.08, 'square', 0.08); }
+    } else if (c.t < 0.85) {
+      const k = (c.t - 0.45) / 0.4;
+      hand.position.z = -2.2 + k * 1.2; hand.position.y = -0.75 + k * 0.6;
+      z.g.position.copy(follow());
+    } else {
+      if (z.state === 'held') {
+        sfx.throwS(); S.shake = 0.4;
+        camera.getWorldDirection(vDir);
+        const h = Math.hypot(vDir.x, vDir.z) || 1;
+        z.x = z.g.position.x; z.z = z.g.position.z; z.y = z.g.position.y;
+        z.vx = vDir.x / h * 20; z.vz = vDir.z / h * 20; z.vy = 11;
+        z.state = 'flying';
+      }
+      const k = Math.min(1, (c.t - 0.85) / 0.2);
+      hand.position.z = -1.0 - k * 1.4; hand.position.y = -0.15 - k * 0.6;
+      if (c.t > 1.25) { hand.position.set(1.0, -0.75, -1.3); S.cine = null; }
+    }
   } else if (c.type === 'end' && c.t > 1.5) {
     S.cine = null; S.running = false;
     const sec = Math.floor(S.time);
-    $('wintitle').textContent = ['탈출 성공!', '2화 클리어!', '3화 클리어!'][EP - 1];
+    $('wintitle').textContent = ['탈출 성공!', '2화 클리어!', '3화 클리어!', '4화 클리어!'][EP - 1];
     $('wintime').textContent = `걸린 시간 ${Math.floor(sec / 60)}분 ${sec % 60}초`;
-    $('wintext').textContent = ['좀비들을 물리치고 마지막 문으로 빠져나왔다.', '좀비 떼와 조금 더 센 좀비까지 모두 물리쳤다!', '엄청 빠른 좀비까지 더 센 메카로 끝장냈다!'][EP - 1];
-    $('next').classList.toggle('hidden', EP >= 3);
+    $('wintext').textContent = ['좀비들을 물리치고 마지막 문으로 빠져나왔다.', '좀비 떼와 조금 더 센 좀비까지 모두 물리쳤다!', '엄청 빠른 좀비까지 더 센 메카로 끝장냈다!', '숨은 그림까지 모두 찾았다!'][EP - 1];
+    $('next').classList.toggle('hidden', EP >= 4);
     $('next').textContent = (EP + 1) + '화 계속하기';
     $('hud').classList.add('hidden');
     $('win').classList.remove('hidden');
@@ -1405,8 +1627,8 @@ function update(dt) {
   const mag = Math.hypot(f, s);
   if (mag > 1) { f /= mag; s /= mag; }
   if (!P.hidden && !S.cine && mag > 0.05) {
-    const sp = (P.inMecha ? (EP === 3 ? 6.5 : 6) : 5) * dt, sn = Math.sin(P.yaw), cs = Math.cos(P.yaw);
-    moveCircle(P, (-sn * f + cs * s) * sp, (-cs * f - sn * s) * sp, P.inMecha ? (EP === 3 ? 1.6 : 1.25) : 0.4);
+    const sp = (P.inMecha ? (EP >= 3 ? 6.5 : 6) : 5) * dt, sn = Math.sin(P.yaw), cs = Math.cos(P.yaw);
+    moveCircle(P, (-sn * f + cs * s) * sp, (-cs * f - sn * s) * sp, P.inMecha ? (EP >= 3 ? 1.6 : 1.25) : 0.4);
     const before = Math.sin(P.bob);
     P.bob += dt * (P.inMecha ? 6 : 10) * Math.min(1, mag);
     if (P.inMecha && before > 0 && Math.sin(P.bob) <= 0) { tone(60, 0.12, 'square', 0.08); S.shake = Math.max(S.shake, 0.08); }
@@ -1470,6 +1692,8 @@ function update(dt) {
   if (S.stage === 'chase') updateChaser(dt);
   if (S.stage === 'horde1' || S.stage === 'horde2' || S.stage === 'e3war') updateHorde(dt);
   if (S.stage === 'e3fast') updateFz(dt);
+  if (S.stage === 'e4gun' || S.stage === 'e4gate') updateGunZ(dt);
+  if (S.stage === 'e4cy') updateCyborg(dt);
   updateBoss(dt);
   updateBallZ(dt);
   if (S.cine) updateCine(dt);
@@ -1482,7 +1706,7 @@ function update(dt) {
   }
 
   // 카메라
-  const eyeT = P.hidden ? 1.5 : P.inMecha ? (EP === 3 ? 5.6 : 4.3) : 1.6;
+  const eyeT = P.hidden ? 1.5 : P.inMecha ? (EP >= 3 ? 5.6 : 4.3) : 1.6;
   P.eye += (eyeT - P.eye) * Math.min(1, dt * 5);
   S.shake = Math.max(0, S.shake - dt);
   const sh = S.shake * 0.25;
@@ -1512,11 +1736,301 @@ function update(dt) {
   }
 }
 
+// ───────────────────────── 4화 미니게임 ─────────────────────────
+function pauseForOverlay(id) {
+  S.running = false; fireHeld = false; stick.id = null; stick.x = stick.y = 0;
+  $('stickbase').classList.add('hidden'); $('fire').classList.remove('down');
+  document.exitPointerLock?.();
+  laser.visible = laserHit.visible = false;
+  $('hud').classList.add('hidden');
+  $(id).classList.remove('hidden');
+}
+function resumeFromOverlay(id) {
+  $(id).classList.add('hidden');
+  $('hud').classList.remove('hidden');
+  S.running = true;
+}
+function closeOverlays() {
+  for (const id of ['memory', 'hidden']) $(id).classList.add('hidden');
+  clearTimeout(MEM.timer); HO.on = false;
+}
+
+// 메모리 게임: 16장(8쌍), AI와 번갈아 뒤집고 짝을 더 많이 찾으면 승리
+const MEM_SYMS = ['🧟', '🔑', '🤖', '🔫', '💣', '🧠', '🚀', '⚡'];
+const MEM = { cards: [], turn: 'me', flips: [], me: 0, ai: 0, lock: true, seen: new Map(), timer: 0, done: false };
+const AI_REMEMBER = 0.7;            // 보통 AI: 본 카드의 70%를 기억한다
+function openMemory() {
+  pauseForOverlay('memory');
+  setStage('e4mem');
+  dealMemory();
+}
+function dealMemory() {
+  clearTimeout(MEM.timer);
+  const syms = [...MEM_SYMS, ...MEM_SYMS];
+  for (let i = syms.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [syms[i], syms[j]] = [syms[j], syms[i]]; }
+  MEM.cards = syms.map((sym) => ({ sym, up: false, owner: null }));
+  Object.assign(MEM, { turn: 'me', flips: [], me: 0, ai: 0, lock: false, done: false });
+  MEM.seen = new Map();
+  const grid = $('memgrid');
+  grid.innerHTML = '';
+  MEM.cards.forEach((c, i) => {
+    const b = document.createElement('button');
+    b.className = 'mcard'; b.type = 'button'; b.setAttribute('aria-label', '카드 ' + (i + 1));
+    b.innerHTML = '<span></span>';
+    b.addEventListener('click', () => { if (MEM.turn === 'me' && !MEM.lock) flipMem(i); });
+    grid.appendChild(b);
+  });
+  $('memretry').classList.add('hidden');
+  // 화면을 연 손가락이 떨어질 때 생기는 터치가 카드를 뒤집지 않도록 잠깐 막는다
+  MEM.lock = true;
+  renderMem('네 차례! 카드 두 장을 뒤집어 같은 그림을 찾아라');
+  MEM.timer = setTimeout(() => { MEM.lock = false; renderMem(); }, 450);
+}
+function renderMem(msg) {
+  const btns = $('memgrid').children;
+  MEM.cards.forEach((c, i) => {
+    const b = btns[i];
+    b.classList.toggle('up', c.up || !!c.owner);
+    b.classList.toggle('mine', c.owner === 'me');
+    b.classList.toggle('ais', c.owner === 'ai');
+    b.firstChild.textContent = c.up || c.owner ? c.sym : '';
+    b.disabled = MEM.turn !== 'me' || MEM.lock || c.up || !!c.owner;
+  });
+  $('memme').textContent = MEM.me; $('memai').textContent = MEM.ai;
+  $('memturn').textContent = MEM.done ? '' : MEM.turn === 'me' ? '내 차례' : 'AI 차례';
+  $('memturn').className = MEM.turn === 'me' ? 'me' : 'ai';
+  if (msg !== undefined) $('memmsg').textContent = msg;
+}
+function flipMem(i) {
+  const c = MEM.cards[i];
+  if (c.up || c.owner || MEM.flips.length >= 2) return;
+  c.up = true; MEM.flips.push(i);
+  tone(660 + MEM.flips.length * 110, 0.06, 'square', 0.05);
+  if (Math.random() < AI_REMEMBER) MEM.seen.set(i, c.sym);
+  renderMem();
+  if (MEM.flips.length < 2) return;
+  const [a, b] = MEM.flips, who = MEM.turn;
+  MEM.lock = true; renderMem();
+  if (MEM.cards[a].sym === MEM.cards[b].sym) {
+    MEM.timer = setTimeout(() => {
+      MEM.cards[a].owner = MEM.cards[b].owner = who; MEM.cards[a].up = MEM.cards[b].up = false;
+      MEM.seen.delete(a); MEM.seen.delete(b);
+      MEM[who]++; MEM.flips = [];
+      sfx.key();
+      if (MEM.me + MEM.ai === MEM_SYMS.length) return endMemory();
+      MEM.lock = false;
+      renderMem(who === 'me' ? '짝을 찾았다! 한 번 더!' : 'AI가 짝을 찾았다. AI가 한 번 더 한다');
+      if (who === 'ai') MEM.timer = setTimeout(aiTurn, 700);
+    }, 500);
+  } else {
+    MEM.timer = setTimeout(() => {
+      MEM.cards[a].up = MEM.cards[b].up = false; MEM.flips = [];
+      MEM.turn = who === 'me' ? 'ai' : 'me'; MEM.lock = false;
+      renderMem(MEM.turn === 'me' ? '네 차례!' : 'AI가 고르는 중…');
+      if (MEM.turn === 'ai') MEM.timer = setTimeout(aiTurn, 600);
+    }, 900);
+  }
+}
+function aiTurn() {
+  if (MEM.turn !== 'ai' || MEM.done) return;
+  const open = MEM.cards.map((c, i) => i).filter((i) => !MEM.cards[i].owner);
+  const known = [...MEM.seen.entries()].filter(([i]) => !MEM.cards[i].owner);
+  const pick1 = () => {
+    for (let x = 0; x < known.length; x++) for (let y = x + 1; y < known.length; y++) if (known[x][1] === known[y][1]) return [known[x][0], known[y][0]];
+    return null;
+  };
+  const pair = pick1();
+  const unknown = open.filter((i) => !MEM.seen.has(i));
+  const first = pair ? pair[0] : (unknown.length ? pick(unknown) : pick(open));
+  flipMem(first);
+  MEM.timer = setTimeout(() => {
+    const sym = MEM.cards[first].sym;
+    let second = pair ? pair[1] : null;
+    if (second === null) { const m = known.find(([i, sy]) => sy === sym && i !== first); if (m) second = m[0]; }
+    if (second === null) { const rest = unknown.filter((i) => i !== first); second = rest.length ? pick(rest) : pick(open.filter((i) => i !== first)); }
+    flipMem(second);
+  }, 750);
+}
+function endMemory() {
+  MEM.done = true; MEM.lock = true;
+  if (MEM.me > MEM.ai) {
+    renderMem(`이겼다! ${MEM.me} : ${MEM.ai}`);
+    sfx.win();
+    MEM.timer = setTimeout(() => {
+      resumeFromOverlay('memory');
+      P.hp = P.max;
+      setDoor(gate, GATE_TILES, true);
+      setStage('e4cy'); spawnCyborg();
+      sfx.roar(); S.shake = 0.5;
+      say('문이 열리고 사이보그 좀비가 나타났다! 가까이 오면 집게로 날려라!', 4);
+    }, 1400);
+  } else {
+    renderMem(MEM.me === MEM.ai ? `비겼다 ${MEM.me} : ${MEM.ai}. 이겨야 문이 열린다` : `졌다 ${MEM.me} : ${MEM.ai}. 다시 도전!`);
+    sfx.no();
+    $('memretry').classList.remove('hidden');
+  }
+  renderMem();
+}
+$('memretry').addEventListener('click', dealMemory);
+
+// 숨은 그림 찾기: 방 그림 한 장에서 5개를 1분 안에 찾는다
+const HO_ITEMS = [['banana', '바나나'], ['laptop', '노트북'], ['car', '스포츠카 장난감'], ['phone', '핸드폰'], ['hat', '모자']];
+const HO = { on: false, left: 60, found: new Set(), spots: {}, marks: [], bg: null };
+const hoCv = $('hocv'), ho = hoCv.getContext('2d');
+const HW = 640, HH = 360;
+function openHidden() {
+  pauseForOverlay('hidden');
+  setStage('e4hidden');
+  newHidden();
+}
+function newHidden() {
+  HO.on = true; HO.left = 60; HO.openAt = performance.now(); HO.found = new Set(); HO.marks = [];
+  $('horetry').classList.add('hidden');
+  drawHiddenScene();
+  renderHO('그림 속에서 다섯 개를 찾아 눌러라!');
+}
+function renderHO(msg) {
+  $('holist').innerHTML = HO_ITEMS.map(([k, n]) => `<li class="${HO.found.has(k) ? 'got' : ''}">${n}</li>`).join('');
+  $('hotime').textContent = Math.ceil(HO.left);
+  $('hotime').classList.toggle('low', HO.left <= 10);
+  if (msg !== undefined) $('homsg').textContent = msg;
+}
+const R = (a, b) => a + Math.random() * (b - a);
+function rr(x, y, w, h, r) { ho.beginPath(); ho.roundRect ? ho.roundRect(x, y, w, h, r) : ho.rect(x, y, w, h); }
+const DRAW = {
+  banana(s) {
+    ho.lineCap = 'round';
+    ho.strokeStyle = '#7a5a10'; ho.lineWidth = s * 0.34; ho.beginPath(); ho.arc(0, -s * 0.35, s * 0.55, 0.25 * Math.PI, 0.75 * Math.PI); ho.stroke();
+    ho.strokeStyle = '#f5d02a'; ho.lineWidth = s * 0.26; ho.beginPath(); ho.arc(0, -s * 0.35, s * 0.55, 0.27 * Math.PI, 0.73 * Math.PI); ho.stroke();
+    ho.fillStyle = '#5a3a10'; ho.fillRect(-s * 0.42, -s * 0.02, s * 0.08, s * 0.08);
+  },
+  laptop(s) {
+    ho.fillStyle = '#5c6470'; rr(-s * 0.45, -s * 0.5, s * 0.9, s * 0.56, 3); ho.fill();
+    ho.fillStyle = '#5fb4ff'; ho.fillRect(-s * 0.38, -s * 0.44, s * 0.76, s * 0.44);
+    ho.fillStyle = '#aab3bf'; rr(-s * 0.55, s * 0.06, s * 1.1, s * 0.14, 2); ho.fill();
+  },
+  car(s) {
+    ho.fillStyle = '#d8241c'; rr(-s * 0.55, -s * 0.18, s * 1.1, s * 0.28, 4); ho.fill();
+    ho.beginPath(); ho.moveTo(-s * 0.25, -s * 0.18); ho.lineTo(-s * 0.1, -s * 0.38); ho.lineTo(s * 0.2, -s * 0.38); ho.lineTo(s * 0.32, -s * 0.18); ho.fill();
+    ho.fillStyle = '#9fd8ff'; ho.fillRect(-s * 0.06, -s * 0.33, s * 0.22, s * 0.13);
+    ho.fillStyle = '#fff'; ho.fillRect(-s * 0.55, -s * 0.06, s * 1.1, s * 0.04);
+    ho.fillStyle = '#111'; for (const wx of [-0.32, 0.32]) { ho.beginPath(); ho.arc(wx * s, s * 0.11, s * 0.13, 0, 7); ho.fill(); }
+  },
+  phone(s) {
+    ho.fillStyle = '#16181d'; rr(-s * 0.24, -s * 0.42, s * 0.48, s * 0.84, 5); ho.fill();
+    ho.fillStyle = '#2d8cff'; ho.fillRect(-s * 0.19, -s * 0.34, s * 0.38, s * 0.62);
+    ho.fillStyle = '#888'; ho.fillRect(-s * 0.05, s * 0.32, s * 0.1, s * 0.04);
+  },
+  hat(s) {
+    ho.fillStyle = '#2f5fbf'; ho.beginPath(); ho.arc(0, 0, s * 0.36, Math.PI, 0); ho.fill();
+    ho.fillRect(-s * 0.05, -s * 0.02, s * 0.62, s * 0.1);
+    ho.fillStyle = '#fff'; ho.beginPath(); ho.arc(0, -s * 0.36, s * 0.06, 0, 7); ho.fill();
+    ho.fillStyle = '#244a96'; ho.fillRect(-s * 0.36, -s * 0.04, s * 0.72, s * 0.06);
+  },
+};
+const CLUTTER = [
+  (s) => { const cs = ['#c0392b', '#2e86de', '#27ae60', '#f39c12', '#8e44ad', '#7f8c8d']; for (let i = 0; i < 3; i++) { ho.fillStyle = pick(cs); ho.fillRect(-s * 0.5, -i * s * 0.16, s * R(0.8, 1), s * 0.14); } },     // 책 더미
+  (s) => { ho.fillStyle = pick(['#e74c3c', '#3498db', '#f1c40f', '#2ecc71', '#fff']); ho.beginPath(); ho.arc(0, 0, s * 0.3, 0, 7); ho.fill(); ho.strokeStyle = 'rgba(0,0,0,.25)'; ho.lineWidth = 2; ho.stroke(); },      // 공
+  (s) => { ho.fillStyle = pick(['#f1c40f', '#e67e22', '#e74c3c', '#3498db', '#9b59b6']); ho.fillRect(-s * 0.2, -s * 0.2, s * 0.4, s * 0.4); ho.fillStyle = '#fff'; ho.font = `bold ${s * 0.28}px sans-serif`; ho.textAlign = 'center'; ho.fillText(pick(['A', 'B', 'C', '1', '2']), 0, s * 0.1); },   // 블록
+  (s) => { ho.fillStyle = pick(['#ecf0f1', '#e74c3c', '#2c3e50']); rr(-s * 0.2, -s * 0.25, s * 0.4, s * 0.45, 3); ho.fill(); ho.strokeStyle = ho.fillStyle; ho.lineWidth = s * 0.06; ho.beginPath(); ho.arc(s * 0.24, -s * 0.03, s * 0.1, -1.5, 1.5); ho.stroke(); },   // 머그컵
+  (s) => { ho.fillStyle = '#a0522d'; ho.fillRect(-s * 0.18, -s * 0.05, s * 0.36, s * 0.3); ho.fillStyle = '#2e7d32'; for (let i = 0; i < 5; i++) { ho.beginPath(); ho.ellipse(R(-0.2, 0.2) * s, -s * R(0.15, 0.45), s * 0.12, s * 0.22, R(-1, 1), 0, 7); ho.fill(); } },   // 화분
+  (s) => { ho.fillStyle = pick(['#f1c40f', '#e74c3c', '#3498db', '#2ecc71']); ho.fillRect(-s * 0.5, -s * 0.04, s, s * 0.08); ho.fillStyle = '#f5cba7'; ho.beginPath(); ho.moveTo(s * 0.5, -s * 0.04); ho.lineTo(s * 0.62, 0); ho.lineTo(s * 0.5, s * 0.04); ho.fill(); },   // 연필
+  (s) => { ho.fillStyle = '#fff'; rr(-s * 0.22, -s * 0.22, s * 0.44, s * 0.44, 5); ho.fill(); ho.fillStyle = '#222'; for (const [a, b] of [[-0.1, -0.1], [0.1, 0.1], [0, 0]]) { ho.beginPath(); ho.arc(a * s, b * s, s * 0.04, 0, 7); ho.fill(); } },   // 주사위
+  (s) => { ho.fillStyle = '#8d6e63'; ho.fillRect(-s * 0.45, -s * 0.35, s * 0.9, s * 0.6); ho.fillStyle = '#6d4c41'; ho.fillRect(-s * 0.45, -s * 0.35, s * 0.9, s * 0.1); },     // 상자
+  (s) => { ho.fillStyle = '#c68642'; ho.beginPath(); ho.arc(0, 0, s * 0.26, 0, 7); ho.fill(); for (const a of [-1, 1]) { ho.beginPath(); ho.arc(a * s * 0.2, -s * 0.22, s * 0.1, 0, 7); ho.fill(); } ho.fillStyle = '#222'; ho.fillRect(-s * 0.1, -s * 0.05, s * 0.05, s * 0.05); ho.fillRect(s * 0.05, -s * 0.05, s * 0.05, s * 0.05); },   // 곰인형
+  (s) => { ho.fillStyle = '#2b2d33'; rr(-s * 0.12, -s * 0.38, s * 0.24, s * 0.76, 4); ho.fill(); ho.fillStyle = '#e74c3c'; ho.beginPath(); ho.arc(0, -s * 0.24, s * 0.05, 0, 7); ho.fill(); },   // 리모컨 (핸드폰과 헷갈림)
+  (s) => { ho.fillStyle = '#f4d03f'; ho.beginPath(); ho.ellipse(0, 0, s * 0.26, s * 0.18, 0, 0, 7); ho.fill(); },   // 레몬 (바나나와 헷갈림)
+  (s) => { ho.fillStyle = pick(['#e74c3c', '#3498db', '#f39c12']); rr(-s * 0.3, -s * 0.12, s * 0.6, s * 0.2, 4); ho.fill(); ho.fillStyle = '#111'; for (const wx of [-0.18, 0.18]) { ho.beginPath(); ho.arc(wx * s, s * 0.1, s * 0.08, 0, 7); ho.fill(); } },   // 장난감 트럭
+  (s) => { ho.fillStyle = pick(['#ff8a80', '#80d8ff', '#ccff90']); ho.beginPath(); ho.moveTo(-s * 0.2, -s * 0.3); ho.lineTo(s * 0.15, -s * 0.3); ho.lineTo(s * 0.15, s * 0.1); ho.lineTo(s * 0.35, s * 0.25); ho.lineTo(-s * 0.2, s * 0.25); ho.fill(); },   // 양말
+];
+function drawHiddenScene() {
+  // 방 배경
+  ho.setTransform(1, 0, 0, 1, 0, 0);
+  ho.fillStyle = '#d9c6a5'; ho.fillRect(0, 0, HW, HH);
+  ho.fillStyle = '#cbb48e'; for (let x = 0; x < HW; x += 32) ho.fillRect(x, 0, 2, 220);
+  ho.fillStyle = '#8b5a2b'; ho.fillRect(0, 220, HW, 140);
+  ho.fillStyle = '#7a4e24'; for (let y = 226; y < HH; y += 18) ho.fillRect(0, y, HW, 2);
+  ho.fillStyle = '#87ceeb'; ho.fillRect(250, 30, 140, 100); ho.fillStyle = '#fff'; ho.fillRect(250, 78, 140, 4); ho.fillRect(318, 30, 4, 100);
+  ho.strokeStyle = '#6d4c41'; ho.lineWidth = 6; ho.strokeRect(250, 30, 140, 100);
+  // 책장, 책상, 침대, 러그
+  ho.fillStyle = '#6d4c41'; ho.fillRect(20, 40, 170, 200); ho.fillStyle = '#5d4037'; for (const y of [90, 140, 190]) ho.fillRect(20, y, 170, 6);
+  ho.fillStyle = '#a1887f'; ho.fillRect(420, 150, 200, 14); ho.fillRect(430, 164, 10, 90); ho.fillRect(600, 164, 10, 90);
+  ho.fillStyle = '#c0392b'; ho.beginPath(); ho.ellipse(320, 300, 170, 42, 0, 0, 7); ho.fill();
+  ho.fillStyle = '#e57373'; ho.beginPath(); ho.ellipse(320, 300, 130, 30, 0, 0, 7); ho.fill();
+  // 물건을 놓을 수 있는 자리
+  const slots = [];
+  for (const y of [86, 136, 186, 236]) for (let x = 40; x <= 175; x += 24) slots.push([x, y - 14]);
+  for (let x = 440; x <= 600; x += 22) slots.push([x, 138]);
+  for (let i = 0; i < 70; i++) slots.push([R(20, 620), R(250, 345)]);
+  for (let x = 262; x <= 380; x += 26) slots.push([x, 128]);
+  const free = slots.sort(() => Math.random() - 0.5);
+  // 목표 5개 자리를 먼저 정한다 (서로 떨어지게)
+  HO.spots = {};
+  const used = [];
+  for (const [k] of HO_ITEMS) {
+    const sp = free.find(([x, y]) => used.every(([ux, uy]) => Math.hypot(ux - x, uy - y) > 70));
+    used.push(sp); HO.spots[k] = { x: sp[0], y: sp[1], s: R(30, 40), r: R(-0.5, 0.5) };
+  }
+  // 잡동사니 (목표 근처에도 섞어 둔다)
+  const drawAt = (fn, x, y, sz, rot) => { ho.save(); ho.translate(x, y); ho.rotate(rot); fn(sz); ho.restore(); };
+  for (const [x, y] of free.slice(0, 120)) {
+    if (used.some(([ux, uy]) => Math.hypot(ux - x, uy - y) < 20)) continue;
+    drawAt(pick(CLUTTER), x, y, R(24, 42), R(-0.6, 0.6));
+  }
+  for (const [k] of HO_ITEMS) { const t = HO.spots[k]; drawAt(DRAW[k], t.x, t.y, t.s, t.r); }
+  // 목표 위에 살짝 겹치는 잡동사니 몇 개
+  for (const [k] of HO_ITEMS) { const t = HO.spots[k]; drawAt(pick(CLUTTER), t.x + R(-26, 26), t.y + R(10, 22), R(18, 24), R(-0.6, 0.6)); }
+  HO.bg = ho.getImageData(0, 0, HW, HH);
+}
+function drawHOMarks() {
+  ho.putImageData(HO.bg, 0, 0);
+  for (const k of HO.found) { const t = HO.spots[k]; ho.strokeStyle = '#18e070'; ho.lineWidth = 4; ho.beginPath(); ho.arc(t.x, t.y - t.s * 0.15, t.s * 0.75, 0, 7); ho.stroke(); }
+  for (const m of HO.marks) { ho.strokeStyle = `rgba(255,60,60,${m.t})`; ho.lineWidth = 4; ho.beginPath(); ho.moveTo(m.x - 9, m.y - 9); ho.lineTo(m.x + 9, m.y + 9); ho.moveTo(m.x + 9, m.y - 9); ho.lineTo(m.x - 9, m.y + 9); ho.stroke(); }
+}
+function tapHidden(x, y) {
+  if (!HO.on || performance.now() - HO.openAt < 450) return;     // 화면을 연 터치는 무시
+  const hit = HO_ITEMS.map(([k]) => k).find((k) => { const t = HO.spots[k]; return !HO.found.has(k) && Math.hypot(t.x - x, t.y - t.s * 0.15 - y) < t.s * 0.75 + 8; });
+  if (hit) {
+    HO.found.add(hit); sfx.key();
+    const name = HO_ITEMS.find(([k]) => k === hit)[1];
+    renderHO(HO.found.size < 5 ? `${name} 찾았다! (${HO.found.size}/5)` : '다 찾았다!');
+    if (HO.found.size === 5) {
+      HO.on = false;
+      setTimeout(() => {
+        resumeFromOverlay('hidden');
+        S.cine = { type: 'end', t: 0 };
+        setStage('win');
+        $('fade').style.opacity = 1; sfx.win();
+      }, 1200);
+    }
+  } else { HO.marks.push({ x, y, t: 1 }); tone(180, 0.1, 'square', 0.05); }
+  drawHOMarks();
+}
+hoCv.addEventListener('pointerdown', (e) => {
+  const r = hoCv.getBoundingClientRect();
+  tapHidden((e.clientX - r.left) / r.width * HW, (e.clientY - r.top) / r.height * HH);
+});
+$('horetry').addEventListener('click', newHidden);
+function updateHidden(dt) {
+  if (!HO.on) return;
+  HO.left -= dt;
+  if (HO.marks.length) { HO.marks.forEach((m) => { m.t -= dt * 2; }); HO.marks = HO.marks.filter((m) => m.t > 0); drawHOMarks(); }
+  if (HO.left <= 0) {
+    HO.left = 0; HO.on = false;
+    renderHO(`시간 초과! ${HO.found.size}/5개 찾았다. 다시 도전!`);
+    sfx.no();
+    $('horetry').classList.remove('hidden');
+    return;
+  }
+  renderHO();
+}
+
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   if (S.running) update(dt);
+  else updateHidden(dt);
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
@@ -1529,4 +2043,4 @@ camera.rotation.set(0, Math.PI, 0);
 requestAnimationFrame(frame);
 
 // 테스트/디버그용
-window.__zg = { P, S, keys, closets, get grid() { return grid; }, get GW() { return GW; }, get EP() { return EP; }, get zombies() { return zombies; }, get boss() { return boss; }, get bosses() { return bosses; }, get fz() { return fz; }, get ballZ() { return ballZ; }, get chaser() { return chaser; }, get exitDoor() { return exitDoor; }, get gate() { return gate; }, get mecha() { return mechaModel; }, startStage, newGame, update, T };
+window.__zg = { P, S, keys, closets, get grid() { return grid; }, get GW() { return GW; }, get EP() { return EP; }, get zombies() { return zombies; }, get boss() { return boss; }, get bosses() { return bosses; }, get fz() { return fz; }, get ballZ() { return ballZ; }, get gz() { return gz; }, get cy() { return cy; }, MEM, HO, tapHidden, aiTurn, get chaser() { return chaser; }, get exitDoor() { return exitDoor; }, get gate() { return gate; }, get mecha() { return mechaModel; }, startStage, newGame, update, T };

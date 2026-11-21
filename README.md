@@ -9,6 +9,7 @@ A small game studio, currently in beta testing. Browser games you can play insta
   3D first-person mobile game. Episode 1: find four keys and escape the maze.
   Episode 2: a chase through a larger maze and zombie hordes.
   Episode 3: a bigger mecha, a five-boss battle and a very fast two-phase zombie.
+  Episode 4: a gun zombie, a memory game against an AI, a cyborg you throw with the mecha clamp, and a one-minute hidden-object search.
 - **뿡뿡 랠리 (Ppung Ppung Rally)** — `ppung-rally/`
   2D off-road racing (canvas). Fart-boost overtakes, hills and jump ramps,
   three courses that rotate endlessly, garage upgrades. No ending yet.

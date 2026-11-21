@@ -84,6 +84,56 @@
   .row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
   .big.alt { background: #cde; padding: 10px 30px; font-size: 16px; }
   kbd { display: inline-block; min-width: 1.5em; margin: 0 1px; padding: 0 4px; text-align: center; font: 700 12px ui-monospace, monospace; color: #000; background: #cde; border-radius: 3px; }
+  /* 4화 미니게임 화면 */
+  .overlay { position: fixed; inset: 0; z-index: 11; display: flex; flex-direction: column; gap: 10px; background: #0b0d1c; color: #f5f5f7; overflow: auto;
+    padding: calc(10px + env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); }
+  .ohead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .ohead b { font-size: 18px; color: #9f6; text-shadow: 2px 2px 0 #153; }
+  .ohead span { font-size: 13px; color: #aab; }
+  .side { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; min-width: 0; }
+  .side p { margin: 0; font-size: 14px; font-weight: 700; min-height: 2.6em; max-width: 16em; }
+  .side .big { margin-top: 4px; padding: 10px 28px; font-size: 16px; }
+
+  .mem { flex: 1; display: flex; align-items: center; justify-content: center; gap: 22px; flex-wrap: wrap; }
+  .score { display: flex; align-items: center; gap: 12px; }
+  .score div { display: flex; flex-direction: column; align-items: center; }
+  .score small { font-size: 12px; color: #aab; }
+  .score strong { font-size: 34px; line-height: 1; font-variant-numeric: tabular-nums; }
+  .score i { font-style: normal; font-size: 26px; color: #556; }
+  #memturn { font-size: 13px; font-weight: 800; padding: 4px 14px; border-radius: 999px; }
+  #memturn.me { background: #9f6; color: #0b1a05; }
+  #memturn.ai { background: #f6a; color: #2a0614; }
+  #memgrid { --cs: min(18vw, calc((100vh - 90px) / 4 - 6px), 92px); display: grid; grid-template-columns: repeat(4, var(--cs)); gap: 6px; }
+  .mcard { width: var(--cs); height: var(--cs); padding: 0; border: 2px solid #2c3460; border-radius: 8px; font-size: calc(var(--cs) * 0.55); line-height: 1; cursor: pointer;
+    background: repeating-linear-gradient(45deg, #1d2346 0 6px, #232a55 6px 12px); color: #fff; transition: transform .15s, background .15s; }
+  .mcard.up { background: #f1f2f8; border-color: #fff; }
+  .mcard.mine { background: #d9ffc4; border-color: #9f6; }
+  .mcard.ais { background: #ffd2e4; border-color: #f6a; }
+  .mcard:disabled { cursor: default; }
+  .mcard:not(:disabled):active { transform: scale(.94); }
+
+  .ho { flex: 1; display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; min-height: 0; }
+  #hocv { width: min(100%, calc((100vh - 80px) * 16 / 9), 900px); height: auto; aspect-ratio: 16 / 9; border: 3px solid #2c3460; border-radius: 6px; touch-action: manipulation; cursor: crosshair; image-rendering: auto; }
+  #holist { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; font-size: 14px; font-weight: 700; text-align: left; }
+  #holist li { padding: 3px 10px; border-radius: 4px; background: #1d2346; }
+  #holist li::before { content: "□ "; color: #778; }
+  #holist li.got { background: #194d2c; color: #b8ffcf; text-decoration: line-through; }
+  #holist li.got::before { content: "✓ "; color: #6f6; }
+  #hotime { font-style: normal; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; }
+  #hotime.low { color: #f55; }
+  #memturn:empty { display: none; }
+  .ho .side, .mem .side { width: 200px; flex: none; }          /* 글자가 바뀌어도 그림과 카드가 움직이지 않게 폭 고정 */
+  @media (orientation: portrait) { .side p { min-height: 0; } #holist { grid-template-columns: 1fr 1fr; } .ho .side, .mem .side { width: 100%; } }
+
+  /* 휴대폰 가로 화면: 타이틀을 촘촘하게 해서 시작 버튼이 한 화면에 들어오게 */
+  @media (max-height: 460px) {
+    .screen h1 { font-size: 30px; margin-bottom: 2px; }
+    .screen > p { font-size: 12px; }
+    .screen ul { columns: 2; column-gap: 28px; max-width: 780px; font-size: 12px; line-height: 1.5; margin: 6px 0; }
+    .screen ul li { break-inside: avoid; }
+    .big { margin-top: 6px; padding: 9px 34px; font-size: 17px; }
+    .big.alt { padding: 7px 20px; font-size: 14px; }
+  }
   .screen a.brandlink { position: absolute; top: calc(14px + env(safe-area-inset-top)); left: calc(16px + env(safe-area-inset-left)); margin: 0; display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 700; letter-spacing: -0.02em; color: #f5f5f7; text-decoration: none; }
   .screen a.brandlink svg { width: 15px; height: 15px; }
   .screen a.brandlink span { font-weight: 400; color: #9ca3af; }
@@ -117,10 +167,35 @@
   <div id="fade"></div>
 </div>
 
+<div id="memory" class="overlay hidden" role="dialog" aria-label="메모리 게임">
+  <div class="ohead"><b>메모리 게임</b><span>AI보다 짝을 더 많이 찾아야 문이 열린다</span></div>
+  <div class="mem">
+    <div class="side">
+      <div class="score"><div><small>나</small><strong id="memme">0</strong></div><i>:</i><div><small>AI</small><strong id="memai">0</strong></div></div>
+      <div id="memturn" class="me">내 차례</div>
+      <p id="memmsg"></p>
+      <button id="memretry" class="big hidden" type="button">다시 도전</button>
+    </div>
+    <div id="memgrid"></div>
+  </div>
+</div>
+
+<div id="hidden" class="overlay hidden" role="dialog" aria-label="숨은 그림 찾기">
+  <div class="ohead"><b>숨은 그림 찾기</b><span>남은 시간 <em id="hotime">60</em>초</span></div>
+  <div class="ho">
+    <canvas id="hocv" width="640" height="360"></canvas>
+    <div class="side">
+      <ul id="holist"></ul>
+      <p id="homsg"></p>
+      <button id="horetry" class="big hidden" type="button">다시 도전</button>
+    </div>
+  </div>
+</div>
+
 <div id="title" class="screen">
   <a class="brandlink" href="../" aria-label="Papertainer Games 홈으로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M2 12l20-9-9 20-2-8-9-3z"/></svg>PAPERTAINER <span>Games</span><em>BETA</em></a>
   <h1>좀비 미로 탈출</h1>
-  <p>1화: 열쇠 4개를 찾아 미로를 빠져나가라! · 2화: 추격전과 좀비 떼 · 3화: 더 센 메카와 엄청 빠른 좀비</p>
+  <p>1화: 열쇠 4개를 찾아 미로를 빠져나가라! · 2화: 추격전과 좀비 떼 · 3화: 더 센 메카와 엄청 빠른 좀비 · 4화: 사이보그와 두뇌 게임</p>
   <ul>
     <li><b>왼쪽 화면</b> 드래그: 이동 &nbsp;/&nbsp; <b>오른쪽 화면</b> 드래그: 시점</li>
     <li><b>발사</b>: 권총 (탄환 무한, 좀비는 한 방)</li>
@@ -130,7 +205,7 @@
     <li><b>PC</b>: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동 · 마우스 시점 · <kbd>F</kbd> 또는 클릭 발사 · <kbd>E</kbd> 행동</li>
   </ul>
   <button id="start" class="big">1화 시작</button>
-  <div class="row"><button id="start2" class="big alt">2화 시작</button><button id="start3" class="big alt">3화 시작</button></div>
+  <div class="row"><button id="start2" class="big alt">2화 시작</button><button id="start3" class="big alt">3화 시작</button><button id="start4" class="big alt">4화 시작</button></div>
   <a href="../">← 게임 목록으로</a>
 </div>
 
